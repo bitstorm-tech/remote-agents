@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh \
+COPY statusline.sh /usr/local/share/statusline.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/share/statusline.sh \
     && mkdir -p /work && chown node:node /work
 
 # uid 1000 — passt zum Standard-User auf dem Host, damit

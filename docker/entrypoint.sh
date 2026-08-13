@@ -35,6 +35,17 @@ if [ -d /seed/codex ]; then
     log "Codex-Login kopiert"
 fi
 
+# --- Statusbar einrichten (Skript kommt aus dem Image) ---
+mkdir -p "$HOME/.claude"
+cp /usr/local/share/statusline.sh "$HOME/.claude/statusline.sh"
+chmod +x "$HOME/.claude/statusline.sh"
+settings="$HOME/.claude/settings.json"
+[ -f "$settings" ] || echo '{}' > "$settings"
+tmp="$(mktemp)"
+jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding: 0}' \
+    "$settings" > "$tmp" && mv "$tmp" "$settings"
+log "Statusbar eingerichtet"
+
 # --- SSH / Deploy-Key ---
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
