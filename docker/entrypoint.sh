@@ -13,7 +13,8 @@
 #   /seed/claude       -> wird nach ~/.claude kopiert (Login/Settings)
 #   /seed/claude.json  -> wird nach ~/.claude.json kopiert
 #   /seed/codex        -> wird nach ~/.codex kopiert (Codex-Login)
-#   /seed/deploy_key   -> SSH-Deploy-Key fürs Repo
+#   /deploy_key        -> SSH-Deploy-Key fürs Repo (eigener Mount,
+#                         darf nicht in /seed liegen: /seed ist read-only)
 set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -37,8 +38,8 @@ fi
 # --- SSH / Deploy-Key ---
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
-if [ -f /seed/deploy_key ]; then
-    cp /seed/deploy_key "$HOME/.ssh/id_deploy"
+if [ -f /deploy_key ]; then
+    cp /deploy_key "$HOME/.ssh/id_deploy"
     chmod 600 "$HOME/.ssh/id_deploy"
     cat > "$HOME/.ssh/config" <<EOF
 Host *

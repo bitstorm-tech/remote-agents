@@ -102,7 +102,7 @@ cmd_new() {
         -e REPO_NAME="$repo" \
         -e BRANCH="$branch" \
         -v "$SEED_DIR":/seed:ro \
-        -v "$key":/seed/deploy_key:ro \
+        -v "$key":/deploy_key:ro \
         "$RC_IMAGE" >/dev/null
 
     echo -n "Warte auf Clone "
