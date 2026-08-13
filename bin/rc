@@ -26,7 +26,17 @@ RC_IMAGE="${RC_IMAGE:-rc-session}"
 REPOS_FILE="$RC_HOME/repos.conf"
 SEED_DIR="$RC_HOME/seed"
 KEYS_DIR="$RC_HOME/keys"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Symlinks auflösen (rc liegt z.B. als Link in ~/.local/bin)
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+    _dir="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    case "$SCRIPT_PATH" in
+        /*) ;;
+        *) SCRIPT_PATH="$_dir/$SCRIPT_PATH" ;;
+    esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 die()  { echo "rc: $*" >&2; exit 1; }
