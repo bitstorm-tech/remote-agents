@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# rc — remote coding session manager
+#
+# Verwaltet Coding-Sessions auf dem Server:
+#   1 Session = 1 Docker-Container (Sandbox) + 1 herdr-Workspace
+#
+# Befehle:
+#   rc new <repo> [branch]   neue Session: Container + Clone + herdr-Tab + Claude
+#   rc ls                    alle Sessions anzeigen
+#   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
+#   rc claude <session>      Claude (nochmal) im Container starten
+#   rc shell <session>       Bash im Container öffnen
+#   rc rm <session>          Session beenden: Container weg, Workspace zu
+#   rc build                 Docker-Image bauen/aktualisieren
+#
+# Konfiguration unter $RC_HOME (Default: ~/.rc):
+#   repos.conf         Zeilen: "<name> <git-url>"
+#   keys/<name>.key    Deploy-Key (privater Teil) pro Repo
+#   seed/claude/       Kopie von ~/.claude nach dem Claude-Login
+#   seed/claude.json   Kopie von ~/.claude.json
+#   seed/codex/        Kopie von ~/.codex nach dem Codex-Login
+set -euo pipefail
+
+RC_HOME="${RC_HOME:-$HOME/.rc}"
+RC_IMAGE="${RC_IMAGE:-rc-session}"
+REPOS_FILE="$RC_HOME/repos.conf"
+SEED_DIR="$RC_HOME/seed"
+KEYS_DIR="$RC_HOME/keys"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+die()  { echo "rc: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+usage() {
+    sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 1
+}
+
+repo_url() {
+    [ -f "$REPOS_FILE" ] || die "Repo-Liste fehlt: $REPOS_FILE"
+    awk -v r="$1" '$1 == r { print $2; exit }' "$REPOS_FILE"
+}
+
+container_name() { echo "rc-$1"; }
+
+container_repo() {
+    docker inspect -f '{{ index .Config.Labels "rc.repo" }}' "$(container_name "$1")" 2>/dev/null \
+        || die "Session '$1' nicht gefunden (rc ls zeigt alle)"
+}
+
+herdr_workspace_id() {
+    # Workspace-ID zu einem Label finden (leer, wenn nicht vorhanden)
+    have herdr || return 0
+    herdr workspace list 2>/dev/null \
+        | jq -r --arg l "$1" '.result.workspaces[]? | select(.label == $l) | .workspace_id' \
+        | head -n1
+}
+
+claude_cmd() {
+    local session="$1" repo="$2"
+    echo "docker exec -it -w /work/$repo $(container_name "$session") claude --dangerously-skip-permissions"
+}
+
+cmd_build() {
+    docker build -t "$RC_IMAGE" "$PROJECT_DIR/docker"
+    echo "Image '$RC_IMAGE' gebaut."
+}
+
+cmd_new() {
+    local repo="${1:-}" branch="${2:-}"
+    [ -n "$repo" ] || usage
+    local url; url="$(repo_url "$repo")"
+    [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
+
+    local key="$KEYS_DIR/$repo.key"
+    [ -f "$key" ] || die "Deploy-Key fehlt: $key"
+    [ -d "$SEED_DIR/claude" ] || die "Claude-Seed fehlt: $SEED_DIR/claude (siehe README, Schritt 'Logins')"
+
+    local session="$repo${branch:+-$branch}"
+    session="$(echo "$session" | sed 's/[^a-zA-Z0-9-]/-/g')"
+    local cname; cname="$(container_name "$session")"
+
+    docker container inspect "$cname" >/dev/null 2>&1 \
+        && die "Session '$session' existiert schon (rc rm $session zum Aufräumen)"
+
+    echo "Starte Container $cname ..."
+    docker run -d --name "$cname" \
+        --label "rc.session=$session" \
+        --label "rc.repo=$repo" \
+        -e REPO_URL="$url" \
+        -e REPO_NAME="$repo" \
+        -e BRANCH="$branch" \
+        -v "$SEED_DIR":/seed:ro \
+        -v "$key":/seed/deploy_key:ro \
+        "$RC_IMAGE" >/dev/null
+
+    echo -n "Warte auf Clone "
+    local ok=""
+    for _ in $(seq 1 120); do
+        if docker exec "$cname" test -f /work/.ready 2>/dev/null; then ok=1; break; fi
+        if [ -z "$(docker ps -q -f "name=^${cname}\$")" ]; then
+            echo; docker logs "$cname" | tail -n 20
+            docker rm -f "$cname" >/dev/null
+            die "Container ist beim Setup gestorben (Log oben)."
+        fi
+        echo -n "."; sleep 1
+    done
+    echo
+    [ -n "$ok" ] || die "Timeout beim Clone. Log ansehen mit: docker logs $cname"
+
+    if have herdr; then
+        local ws pane
+        if ws="$(herdr workspace create --cwd "$HOME" --label "$session" --no-focus 2>/dev/null)"; then
+            pane="$(jq -r '.result.root_pane.pane_id' <<<"$ws")"
+            herdr pane run "$pane" "$(claude_cmd "$session" "$repo")" >/dev/null
+            echo "Session '$session' läuft. Reinspringen mit: rc attach $session"
+            return
+        fi
+        echo "Hinweis: herdr ist installiert, läuft aber nicht (einmal 'herdr' starten)."
+    else
+        echo "Hinweis: herdr ist nicht installiert."
+    fi
+    echo "Container läuft trotzdem. Claude direkt starten mit: rc claude $session"
+}
+
+cmd_ls() {
+    echo "== Container =="
+    docker ps -a --filter "label=rc.session" \
+        --format 'table {{.Label "rc.session"}}\t{{.Status}}\t{{.Label "rc.repo"}}'
+    if have herdr; then
+        echo
+        echo "== herdr-Workspaces =="
+        herdr workspace list 2>/dev/null \
+            | jq -r '.result.workspaces[]? | "\(.workspace_id)\t\(.label)"' \
+            || echo "(herdr läuft gerade nicht)"
+    fi
+}
+
+cmd_attach() {
+    local session="${1:-}"
+    have herdr || die "herdr ist nicht installiert"
+    if [ -n "$session" ]; then
+        local ws; ws="$(herdr_workspace_id "$session")"
+        [ -n "$ws" ] && herdr workspace focus "$ws" >/dev/null 2>&1 || true
+    fi
+    exec herdr
+}
+
+cmd_claude() {
+    local session="${1:-}"
+    [ -n "$session" ] || usage
+    local repo; repo="$(container_repo "$session")"
+    eval "$(claude_cmd "$session" "$repo")"
+}
+
+cmd_shell() {
+    local session="${1:-}"
+    [ -n "$session" ] || usage
+    local repo; repo="$(container_repo "$session")"
+    docker exec -it -w "/work/$repo" "$(container_name "$session")" bash
+}
+
+cmd_rm() {
+    local session="${1:-}"
+    [ -n "$session" ] || usage
+    local cname; cname="$(container_name "$session")"
+    docker rm -f "$cname" >/dev/null 2>&1 && echo "Container $cname entfernt." \
+        || echo "Kein Container $cname (schon weg?)."
+    local ws; ws="$(herdr_workspace_id "$session")"
+    if [ -n "$ws" ]; then
+        herdr workspace close "$ws" >/dev/null 2>&1 && echo "herdr-Workspace geschlossen."
+    fi
+}
+
+case "${1:-}" in
+    new)    shift; cmd_new "$@" ;;
+    ls)     shift; cmd_ls "$@" ;;
+    attach) shift; cmd_attach "$@" ;;
+    claude) shift; cmd_claude "$@" ;;
+    shell)  shift; cmd_shell "$@" ;;
+    rm)     shift; cmd_rm "$@" ;;
+    build)  shift; cmd_build "$@" ;;
+    *)      usage ;;
+esac
