@@ -120,12 +120,20 @@ cmd_new() {
     [ -n "$ok" ] || die "Timeout beim Clone. Log ansehen mit: docker logs $cname"
 
     if have herdr; then
-        local ws pane
+        local ws pane ws_id
         if ws="$(herdr workspace create --cwd "$HOME" --label "$session" --no-focus 2>/dev/null)"; then
             pane="$(jq -r '.result.root_pane.pane_id' <<<"$ws")"
             herdr pane run "$pane" "$(claude_cmd "$session" "$repo")" >/dev/null
-            echo "Session '$session' läuft. Reinspringen mit: rc attach $session"
-            return
+            # Workspace fokussieren und direkt reinspringen
+            ws_id="$(jq -r 'if (.result.workspace | type) == "object"
+                            then .result.workspace.workspace_id
+                            else .result.workspace end' <<<"$ws")"
+            [ -n "$ws_id" ] && herdr workspace focus "$ws_id" >/dev/null 2>&1 || true
+            echo "Session '$session' läuft."
+            if env | grep -q '^HERDR'; then
+                return   # wir sind schon in herdr, Fokus reicht
+            fi
+            exec herdr
         fi
         echo "Hinweis: herdr ist installiert, läuft aber nicht (einmal 'herdr' starten)."
     else
