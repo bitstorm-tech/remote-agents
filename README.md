@@ -84,15 +84,12 @@ rc shell mein-repo-fix-login # Bash in der Sandbox
 rc rm mein-repo-fix-login    # Session komplett aufräumen
 ```
 
-Claude läuft im Container mit `--dangerously-skip-permissions` — bewusst so
-entschieden, der Container ist die Sandbox.
+Claude läuft im Container mit `--permission-mode auto`: Harmloses läuft ohne
+Nachfrage durch, riskante Befehle erzeugen eine Rückfrage (erreichbar per
+Remote Control). Bewusst nicht Bypass — der Container schützt zwar den Host,
+enthält aber Deploy-Key und gh-Login, kann also nach draußen wirken.
 
 ## Bekannte offene Punkte
-
-- Beim ersten Claude-Start in einer Session bleibt **eine** Bestätigung übrig
-  (Bypass-Permissions-Warnung). Der interne Merker dafür ist nicht dokumentiert;
-  unser Vorab-Häkchen `bypassPermissionsModeAccepted` greift in aktuellen
-  Claude-Versionen offenbar nicht mehr. Bewusst so gelassen — einmal Enter.
 - Seeds werden beim Container-Start **kopiert** (nicht gemountet). Läuft eine
   Session sehr lange und das Claude-OAuth-Token läuft ab, hilft: auf dem Host
   neu einloggen, Seed neu kopieren, Session neu starten.

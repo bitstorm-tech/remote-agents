@@ -85,7 +85,9 @@ claude_cmd() {
     # steckt — sonst bleibt die Agenten-Erkennung in der Sidebar leer.
     # -u node: im Sysbox-Modus läuft der Container als root (fürs innere
     # Docker) — Claude soll aber immer als normaler User laufen.
-    echo "HERDR_AGENT=claude docker exec -it -u node -w /work/$repo $(container_name "$session") claude --dangerously-skip-permissions"
+    # auto statt bypass: fragt praktisch nie, aber riskante Befehle (der
+    # Container hat Deploy-Key + gh-Login) landen als Frage im Remote Control.
+    echo "HERDR_AGENT=claude docker exec -it -u node -w /work/$repo $(container_name "$session") claude --permission-mode auto"
 }
 
 cmd_build() {
