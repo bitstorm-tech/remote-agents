@@ -7,11 +7,13 @@
 # Befehle:
 #   rc new [branch] [repo]   neue Session: Container + Clone + herdr-Tab + Claude
 #                            (repo weglassen = erstes Repo aus repos.conf)
-#   rc issues [repo]         für jedes offene GitHub-Issue mit Label
+#   rc issues [--dry-run] [repo]
+#                            für jedes offene GitHub-Issue mit Label
 #                            "ready-for-agent" eine Session starten (Branch
 #                            issue-<NR>); Issues, an denen schon gearbeitet
 #                            wird (laufende Session oder Remote-Branch
-#                            issue-<NR>*), werden übersprungen
+#                            issue-<NR>*), werden übersprungen.
+#                            --dry-run: nur anzeigen, nichts starten
 #   rc ls                    alle Sessions anzeigen
 #   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
 #   rc claude <session>      Claude (nochmal) im Container starten
@@ -243,6 +245,8 @@ cmd_issues() {
     #   - eine Session mit "issue-<NR>" im Namen existiert (rc-Container), oder
     #   - auf GitHub gibt es schon einen Branch "issue-<NR>..."
     #     (deckt den Fall ab: Session fertig + entfernt, PR noch offen)
+    local dry_run=0
+    if [ "${1:-}" = "--dry-run" ]; then dry_run=1; shift; fi
     local repo="${1:-}"
     repo="$(resolve_repo "$repo")"
     local url; url="$(repo_url "$repo")"
@@ -271,6 +275,9 @@ cmd_issues() {
             echo "Issue #$n: Session läuft schon — übersprungen."
         elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
             echo "Issue #$n: Branch issue-$n existiert schon auf GitHub — übersprungen."
+        elif [ "$dry_run" = 1 ]; then
+            echo "Issue #$n: würde Session starten (Branch issue-$n)."
+            started=$((started + 1))
         else
             echo "Issue #$n: starte Session ..."
             cmd_new --no-attach \
@@ -279,7 +286,11 @@ cmd_issues() {
             started=$((started + 1))
         fi
     done
-    echo "Fertig: $started neue Session(s) gestartet."
+    if [ "$dry_run" = 1 ]; then
+        echo "Dry-Run: $started Session(s) würden starten, nichts wurde angefasst."
+    else
+        echo "Fertig: $started neue Session(s) gestartet."
+    fi
 }
 
 cmd_ls() {

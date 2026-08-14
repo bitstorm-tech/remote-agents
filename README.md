@@ -80,6 +80,7 @@ rc new fix-login mein-repo   # neue Session: Sandbox + Clone + Claude läuft
 rc issues                    # pro offenem Issue mit Label "ready-for-agent"
                              # eine Session starten (Branch issue-<NR>);
                              # schon Begonnenes wird übersprungen
+rc issues --dry-run          # nur anzeigen, was starten würde
 rc attach                    # herdr öffnen, Tabs = Sessions
 # Detach in herdr: Ctrl+B Q  — alles läuft weiter
 rc ls                        # was läuft gerade?
