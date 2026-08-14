@@ -266,7 +266,9 @@ cmd_login() {
         ;;
     codex)
         have codex || die "codex ist auf dem Host nicht installiert (npm install -g @openai/codex)"
-        codex login || die "codex login ist fehlgeschlagen"
+        # --device-auth: der Server ist headless — Code am eigenen Rechner
+        # im Browser eingeben statt localhost-Redirect auf dem Server
+        codex login --device-auth || die "codex login ist fehlgeschlagen"
         cred="$HOME/.codex/auth.json"
         [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
         mkdir -p "$AUTH_DIR/codex"
