@@ -13,6 +13,7 @@
 #   /seed/claude       -> wird nach ~/.claude kopiert (Login/Settings)
 #   /seed/claude.json  -> wird nach ~/.claude.json kopiert
 #   /seed/codex        -> wird nach ~/.codex kopiert (Codex-Login)
+#   /seed/gh           -> wird nach ~/.config/gh kopiert (gh-Login)
 #   /deploy_key        -> SSH-Deploy-Key fürs Repo (eigener Mount,
 #                         darf nicht in /seed liegen: /seed ist read-only)
 set -euo pipefail
@@ -33,6 +34,11 @@ if [ -d /seed/codex ]; then
     mkdir -p "$HOME/.codex"
     cp -r /seed/codex/. "$HOME/.codex/"
     log "Codex-Login kopiert"
+fi
+if [ -d /seed/gh ]; then
+    mkdir -p "$HOME/.config/gh"
+    cp -r /seed/gh/. "$HOME/.config/gh/"
+    log "gh-Login kopiert"
 fi
 
 # --- Statusbar einrichten (Skript kommt aus dem Image) ---

@@ -44,6 +44,9 @@ codex    # einloggen, dann beenden
 cp -r ~/.claude      ~/.rc/seed/claude
 cp    ~/.claude.json ~/.rc/seed/claude.json
 cp -r ~/.codex       ~/.rc/seed/codex
+sudo apt install gh   # GitHub CLI, fürs Login auf dem Host
+gh auth login         # GitHub-Login (für PRs/Issues in den Sessions)
+cp -r ~/.config/gh   ~/.rc/seed/gh
 
 # 6. Deploy-Keys ablegen (pro Repo, Name muss zu repos.conf passen)
 # Key erzeugen: ssh-keygen -t ed25519 -f ~/.rc/keys/mein-repo.key -N ""
