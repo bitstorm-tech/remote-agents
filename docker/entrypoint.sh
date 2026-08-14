@@ -50,9 +50,10 @@ settings="$HOME/.claude/settings.json"
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp="$(mktemp)"
 jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding: 0}
-    | .outputStyle = "ELI5"' \
+    | .outputStyle = "ELI5"
+    | .remoteControlAtStartup = true' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-log "Statusbar + ELI5-Style eingerichtet"
+log "Statusbar + ELI5-Style + Remote Control eingerichtet"
 
 # --- SSH / Deploy-Key ---
 mkdir -p "$HOME/.ssh"
