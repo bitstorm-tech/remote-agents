@@ -1,5 +1,5 @@
-# Session-Image: eine Sandbox pro Coding-Session.
-# Enthält claude, codex, git und Basis-Tooling.
+# Session image: one sandbox per coding session.
+# Contains claude, codex, git and basic tooling.
 FROM node:22-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,13 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
-# Inneres Docker für Testcontainers (läuft nur mit Sysbox-Runtime auf dem Host)
-# + gosu für den Benutzerwechsel root -> node im Entrypoint
+# Inner Docker for Testcontainers (only works with the Sysbox runtime on the host)
+# + gosu for the root -> node user switch in the entrypoint
 RUN apt-get update && apt-get install -y --no-install-recommends docker.io gosu \
     && rm -rf /var/lib/apt/lists/* \
     && usermod -aG docker node
 
-# GitHub CLI (offizielles apt-Repo)
+# GitHub CLI (official apt repo)
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         > /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -31,8 +31,8 @@ COPY eli5.md /usr/local/share/eli5.md
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/share/statusline.sh \
     && mkdir -p /work && chown node:node /work
 
-# uid 1000 — passt zum Standard-User auf dem Host, damit
-# read-only gemountete Seeds/Keys lesbar sind.
+# uid 1000 — matches the default user on the host, so
+# read-only mounted seeds/keys are readable.
 USER node
 WORKDIR /work
 

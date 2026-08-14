@@ -1,41 +1,40 @@
 #!/usr/bin/env bash
 # rc — remote coding session manager
 #
-# Verwaltet Coding-Sessions auf dem Server:
-#   1 Session = 1 Docker-Container (Sandbox) + 1 herdr-Workspace
+# Manages coding sessions on the server:
+#   1 session = 1 Docker container (sandbox) + 1 herdr workspace
 #
-# Befehle:
-#   rc new [branch] [repo]   neue Session: Container + Clone + herdr-Tab + Claude
-#                            (repo weglassen = erstes Repo aus repos.conf)
+# Commands:
+#   rc new [branch] [repo]   new session: container + clone + herdr tab + Claude
+#                            (omit repo = first repo in repos.conf)
 #   rc issues [--dry-run] [repo]
-#                            für jedes offene GitHub-Issue mit Label
-#                            "ready-for-agent" eine Session starten (Branch
-#                            issue-<NR>); übersprungen werden Sub-Issues
-#                            (Issues mit Parent) und Issues, an denen schon
-#                            gearbeitet wird (laufende Session oder
-#                            Remote-Branch issue-<NR>*).
-#                            --dry-run: nur anzeigen, nichts starten
-#   rc ls                    alle Sessions anzeigen
-#   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
-#   rc claude <session>      Claude (nochmal) im Container starten
-#   rc shell <session>       Bash im Container öffnen
-#   rc rm <session> [...]    Session(s) beenden: Container weg, Workspace zu
-#   rc login [claude|codex]  Login erneuern (bei "Login expired"), Default claude;
-#                            laufende Sessions übernehmen ihn automatisch
-#   rc build                 Docker-Image bauen/aktualisieren
-#   rc upgrade               git pull + rc build in einem Rutsch
+#                            start a session for every open GitHub issue
+#                            labeled "ready-for-agent" (branch issue-<NO>);
+#                            skipped: sub-issues (issues with a parent) and
+#                            issues already being worked on (running session
+#                            or remote branch issue-<NO>*).
+#                            --dry-run: only show what would start
+#   rc ls                    list all sessions
+#   rc attach [session]      open herdr (and focus that workspace if given)
+#   rc claude <session>      start Claude (again) in the container
+#   rc shell <session>       open a bash shell in the container
+#   rc rm <session> [...]    end session(s): remove container, close workspace
+#   rc login [claude|codex]  renew a login (on "Login expired"), default claude;
+#                            running sessions pick it up automatically
+#   rc build                 build/update the Docker image
+#   rc upgrade               git pull + rc build in one go
 #
-# Konfiguration unter $RC_HOME (Default: ~/.rc):
-#   repos.conf         Zeilen: "<name> <git-url>"
-#   keys/<name>.key    Deploy-Key (privater Teil) pro Repo
-#   seed/claude/       Kopie von ~/.claude nach dem Claude-Login
-#   seed/claude.json   Kopie von ~/.claude.json
-#   seed/codex/        Kopie von ~/.codex nach dem Codex-Login
-#   seed/gh/           Kopie von ~/.config/gh nach dem gh-Login
-#   auth/claude/       geteilte Claude-Credentials aller Sessions
-#   auth/codex/        geteilte Codex-Credentials aller Sessions
-#                      (rw in jeden Container gemountet; rc login schreibt
-#                      hierher, die Sessions syncen sich selbst)
+# Configuration under $RC_HOME (default: ~/.rc):
+#   repos.conf         lines: "<name> <git-url>"
+#   keys/<name>.key    deploy key (private part) per repo
+#   seed/claude/       copy of ~/.claude taken after the Claude login
+#   seed/claude.json   copy of ~/.claude.json
+#   seed/codex/        copy of ~/.codex taken after the Codex login
+#   seed/gh/           copy of ~/.config/gh taken after the gh login
+#   auth/claude/       shared Claude credentials of all sessions
+#   auth/codex/        shared Codex credentials of all sessions
+#                      (mounted rw into every container; rc login writes
+#                      here, the sessions sync themselves)
 set -euo pipefail
 
 RC_HOME="${RC_HOME:-$HOME/.rc}"
@@ -44,7 +43,7 @@ REPOS_FILE="$RC_HOME/repos.conf"
 SEED_DIR="$RC_HOME/seed"
 KEYS_DIR="$RC_HOME/keys"
 AUTH_DIR="$RC_HOME/auth"
-# Symlinks auflösen (rc liegt z.B. als Link in ~/.local/bin)
+# Resolve symlinks (rc is usually linked into ~/.local/bin)
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
     _dir="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -61,18 +60,18 @@ die()  { echo "rc: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
-    # Kopf-Kommentar dieses Skripts ausgeben (bis zur ersten Nicht-Kommentar-Zeile)
+    # Print this script's header comment (up to the first non-comment line)
     awk 'NR > 1 { if (/^#/) { sub(/^# ?/, ""); print } else exit }' "$SCRIPT_PATH"
     exit 1
 }
 
 repo_url() {
-    [ -f "$REPOS_FILE" ] || die "Repo-Liste fehlt: $REPOS_FILE"
+    [ -f "$REPOS_FILE" ] || die "repo list missing: $REPOS_FILE"
     awk -v r="$1" '$1 == r { print $2; exit }' "$REPOS_FILE"
 }
 
 default_repo() {
-    # Erstes echtes Repo in repos.conf (Kommentare/Leerzeilen überspringen)
+    # First real repo in repos.conf (skip comments/blank lines)
     [ -f "$REPOS_FILE" ] || return 0
     awk '$1 !~ /^#/ && NF >= 2 { print $1; exit }' "$REPOS_FILE"
 }
@@ -80,30 +79,30 @@ default_repo() {
 container_name() { echo "rc-$1"; }
 
 repo_slug() {
-    # "owner/repo" aus einer Git-URL ziehen (ssh oder https)
+    # Extract "owner/repo" from a git URL (ssh or https)
     echo "$1" | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##'
 }
 
 resolve_repo() {
-    # Repo-Name bestimmen: Argument oder Default aus repos.conf
+    # Determine the repo name: argument or default from repos.conf
     local repo="$1"
     if [ -z "$repo" ]; then
         repo="$(default_repo)"
-        [ -n "$repo" ] || die "repos.conf ist leer — kein Default-Repo ($REPOS_FILE)"
-        echo "Repo: $repo (Default)" >&2
+        [ -n "$repo" ] || die "repos.conf is empty — no default repo ($REPOS_FILE)"
+        echo "Repo: $repo (default)" >&2
     fi
     echo "$repo"
 }
 
 container_repo() {
     docker inspect -f '{{ index .Config.Labels "rc.repo" }}' "$(container_name "$1")" 2>/dev/null \
-        || die "Session '$1' nicht gefunden (rc ls zeigt alle)"
+        || die "session '$1' not found (rc ls shows all)"
 }
 
 herdr_workspace_id() {
-    # Workspace-ID zu einem Label finden (leer, wenn nicht vorhanden).
-    # "|| true": herdr kann installiert sein, aber gerade nicht laufen —
-    # das darf rc wegen "set -e" nicht abbrechen.
+    # Find the workspace ID for a label (empty if not present).
+    # "|| true": herdr may be installed but not running right now —
+    # that must not abort rc because of "set -e".
     have herdr || return 0
     { herdr workspace list 2>/dev/null || true; } \
         | jq -r --arg l "$1" '.result.workspaces[]? | select(.label == $l) | .workspace_id' \
@@ -112,34 +111,34 @@ herdr_workspace_id() {
 
 claude_cmd() {
     local session="$1" repo="$2" prompt="${3:-}"
-    # HERDR_AGENT sagt herdr, dass in diesem "Wrapper" (docker exec) Claude
-    # steckt — sonst bleibt die Agenten-Erkennung in der Sidebar leer.
-    # -u node: im Sysbox-Modus läuft der Container als root (fürs innere
-    # Docker) — Claude soll aber immer als normaler User laufen.
-    # auto statt bypass: fragt praktisch nie, aber riskante Befehle (der
-    # Container hat Deploy-Key + gh-Login) landen als Frage im Remote Control.
+    # HERDR_AGENT tells herdr that this "wrapper" (docker exec) contains
+    # Claude — otherwise the agent detection in the sidebar stays empty.
+    # -u node: in Sysbox mode the container runs as root (for the inner
+    # Docker) — but Claude should always run as a normal user.
+    # auto instead of bypass: rarely asks, but risky commands (the container
+    # holds the deploy key + gh login) show up as questions in Remote Control.
     local cmd="HERDR_AGENT=claude docker exec -it -u node -w /work/$repo $(container_name "$session") claude --permission-mode auto"
-    # Optionaler Start-Prompt; %q quotet ihn shell-sicher (der String wird
-    # später von einer Shell ausgeführt: herdr pane run bzw. eval)
+    # Optional start prompt; %q quotes it shell-safely (the string is
+    # executed by a shell later: herdr pane run or eval)
     [ -n "$prompt" ] && cmd="$cmd $(printf '%q' "$prompt")"
     echo "$cmd"
 }
 
 cmd_build() {
     docker build -t "$RC_IMAGE" "$PROJECT_DIR/docker"
-    echo "Image '$RC_IMAGE' gebaut."
+    echo "Image '$RC_IMAGE' built."
 }
 
 cmd_upgrade() {
-    echo "Hole neuesten Stand in $PROJECT_DIR ..."
+    echo "Pulling latest version in $PROJECT_DIR ..."
     git -C "$PROJECT_DIR" pull --ff-only
     cmd_build
-    echo "Fertig. Gilt für neue Sessions (laufende behalten das alte Image)."
+    echo "Done. Applies to new sessions (running ones keep the old image)."
 }
 
 cmd_new() {
-    # Interne Flags (nutzt rc issues): --no-attach = nicht in herdr springen,
-    # --prompt <text> = Claude direkt mit diesem Auftrag starten
+    # Internal flags (used by rc issues): --no-attach = don't jump into herdr,
+    # --prompt <text> = start Claude right away with this task
     local attach=1 prompt=""
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -151,15 +150,15 @@ cmd_new() {
     local branch="${1:-}" repo="${2:-}"
     repo="$(resolve_repo "$repo")"
     local url; url="$(repo_url "$repo")"
-    [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
+    [ -n "$url" ] || die "repo '$repo' is not listed in $REPOS_FILE"
 
     local key="$KEYS_DIR/$repo.key"
-    [ -f "$key" ] || die "Deploy-Key fehlt: $key"
-    [ -d "$SEED_DIR/claude" ] || die "Claude-Seed fehlt: $SEED_DIR/claude (siehe README, Schritt 'Logins')"
+    [ -f "$key" ] || die "deploy key missing: $key"
+    [ -d "$SEED_DIR/claude" ] || die "Claude seed missing: $SEED_DIR/claude (see README, step 'Logins')"
 
-    # Geteilte Credentials (Claude + Codex): eine Datei für alle Sessions,
-    # damit ein Token-Refresh in einer Session nicht die anderen ungültig
-    # macht. Beim allerersten Mal vom Host-Login übernehmen, falls vorhanden.
+    # Shared credentials (Claude + Codex): one file for all sessions, so a
+    # token refresh in one session doesn't invalidate the others. On the
+    # very first run, take them from the host login if present.
     local pair shared_file host_file
     mkdir -p "$AUTH_DIR/claude" "$AUTH_DIR/codex"
     for pair in "claude/.credentials.json:$HOME/.claude/.credentials.json" \
@@ -169,7 +168,7 @@ cmd_new() {
         if [ ! -f "$shared_file" ] && [ -f "$host_file" ]; then
             cp -p "$host_file" "$shared_file"
             chmod 600 "$shared_file"
-            echo "Geteilte Credentials aus dem Host-Login angelegt: $shared_file"
+            echo "Created shared credentials from the host login: $shared_file"
         fi
     done
 
@@ -178,19 +177,19 @@ cmd_new() {
     local cname; cname="$(container_name "$session")"
 
     docker container inspect "$cname" >/dev/null 2>&1 \
-        && die "Session '$session' existiert schon (rc rm $session zum Aufräumen)"
+        && die "session '$session' already exists (rc rm $session to clean up)"
 
-    # Sysbox-Runtime da? Dann bekommt die Session ihr eigenes inneres Docker
-    # (für Testcontainers). Container startet dafür als root; der Entrypoint
-    # wechselt nach dem dockerd-Start selbst zum User node.
+    # Sysbox runtime available? Then the session gets its own inner Docker
+    # (for Testcontainers). The container starts as root for that; the
+    # entrypoint switches to the node user itself after starting dockerd.
     local runtime_args=()
     if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q 'sysbox-runc'; then
         runtime_args=(--runtime=sysbox-runc -u 0)
     else
-        echo "Warnung: Sysbox fehlt auf dem Host — Session ohne inneres Docker (Testcontainers laufen nicht)."
+        echo "Warning: Sysbox is missing on the host — session without inner Docker (Testcontainers won't run)."
     fi
 
-    echo "Starte Container $cname ..."
+    echo "Starting container $cname ..."
     docker run -d --init --name "$cname" "${runtime_args[@]}" \
         --label "rc.session=$session" \
         --label "rc.repo=$repo" \
@@ -202,62 +201,62 @@ cmd_new() {
         -v "$key":/deploy_key:ro \
         "$RC_IMAGE" >/dev/null
 
-    echo -n "Warte auf Clone "
+    echo -n "Waiting for clone "
     local ok=""
     for _ in $(seq 1 120); do
         if docker exec "$cname" test -f /work/.ready 2>/dev/null; then ok=1; break; fi
         if [ -z "$(docker ps -q -f "name=^${cname}\$")" ]; then
             echo; docker logs "$cname" | tail -n 20
             docker rm -f "$cname" >/dev/null
-            die "Container ist beim Setup gestorben (Log oben)."
+            die "container died during setup (log above)."
         fi
         echo -n "."; sleep 1
     done
     echo
-    [ -n "$ok" ] || die "Timeout beim Clone. Log ansehen mit: docker logs $cname"
+    [ -n "$ok" ] || die "timeout during clone. Check the log with: docker logs $cname"
 
     if have herdr; then
         local ws pane ws_id
         if ws="$(herdr workspace create --cwd "$HOME" --label "$session" --no-focus 2>/dev/null)"; then
             pane="$(jq -r '.result.root_pane.pane_id' <<<"$ws")"
             herdr pane run "$pane" "$(claude_cmd "$session" "$repo" "$prompt")" >/dev/null
-            echo "Session '$session' läuft."
+            echo "Session '$session' is running."
             [ "$attach" = 1 ] || return
-            # Workspace fokussieren und direkt reinspringen
+            # Focus the workspace and jump right in
             ws_id="$(jq -r 'if (.result.workspace | type) == "object"
                             then .result.workspace.workspace_id
                             else .result.workspace end' <<<"$ws")"
             [ -n "$ws_id" ] && herdr workspace focus "$ws_id" >/dev/null 2>&1 || true
             if env | grep -q '^HERDR'; then
-                return   # wir sind schon in herdr, Fokus reicht
+                return   # we're already inside herdr, focusing is enough
             fi
             exec herdr
         fi
-        echo "Hinweis: herdr ist installiert, läuft aber nicht (einmal 'herdr' starten)."
+        echo "Note: herdr is installed but not running (start 'herdr' once)."
     else
-        echo "Hinweis: herdr ist nicht installiert."
+        echo "Note: herdr is not installed."
     fi
-    echo "Container läuft trotzdem. Claude direkt starten mit: rc claude $session"
+    echo "The container is running anyway. Start Claude directly with: rc claude $session"
 }
 
 cmd_issues() {
-    # Für jedes offene Issue mit Label "ready-for-agent" eine Session starten.
-    # Übersprungen wird, woran erkennbar schon gearbeitet wird:
-    #   - eine Session mit "issue-<NR>" im Namen existiert (rc-Container), oder
-    #   - auf GitHub gibt es schon einen Branch "issue-<NR>..."
-    #     (deckt den Fall ab: Session fertig + entfernt, PR noch offen)
+    # Start a session for every open issue labeled "ready-for-agent".
+    # Skipped is anything visibly already in progress:
+    #   - a session with "issue-<NO>" in its name exists (rc container), or
+    #   - GitHub already has a branch "issue-<NO>..."
+    #     (covers: session finished + removed, PR still open)
     local dry_run=0
     if [ "${1:-}" = "--dry-run" ]; then dry_run=1; shift; fi
     local repo="${1:-}"
     repo="$(resolve_repo "$repo")"
     local url; url="$(repo_url "$repo")"
-    [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
-    have gh || die "gh ist auf dem Host nicht installiert"
+    [ -n "$url" ] || die "repo '$repo' is not listed in $REPOS_FILE"
+    have gh || die "gh is not installed on the host"
     local slug; slug="$(repo_slug "$url")"
 
-    # GraphQL statt "gh issue list": liefert pro Issue auch den Parent mit —
-    # Sub-Issues sind normale Issues und sollen keine eigene Session bekommen
-    # (die Session des Parents kümmert sich um das Gesamtpaket)
+    # GraphQL instead of "gh issue list": also returns each issue's parent —
+    # sub-issues are ordinary issues and must not get their own session
+    # (the parent's session takes care of the whole bundle)
     local issues
     issues="$(gh api graphql \
         -f owner="${slug%/*}" -f name="${slug#*/}" \
@@ -269,14 +268,14 @@ cmd_issues() {
             }
         }' \
         --jq '.data.repository.issues.nodes[] | "\(.number)\t\(.parent.number // "")"')" \
-        || die "Konnte Issues nicht laden (GraphQL, Repo $slug)"
+        || die "could not load issues (GraphQL, repo $slug)"
     if [ -z "$issues" ]; then
-        echo "Keine offenen Issues mit Label 'ready-for-agent' in $slug."
+        echo "No open issues labeled 'ready-for-agent' in $slug."
         return
     fi
 
-    # Beides einmal vorab holen statt pro Issue: alle Sessions (auch gestoppte —
-    # deren Containername ist eh noch belegt) und alle Remote-Branches
+    # Fetch both once up front instead of per issue: all sessions (stopped
+    # ones too — their container name is still taken) and all remote branches
     local sessions branches
     sessions="$(docker ps -a --filter label=rc.session --format '{{.Label "rc.session"}}')"
     branches="$(gh api "repos/$slug/branches" --paginate --jq '.[].name' 2>/dev/null || true)"
@@ -285,16 +284,16 @@ cmd_issues() {
     while IFS=$'\t' read -r n parent; do
         [ -n "$n" ] || continue
         if [ -n "$parent" ]; then
-            echo "Issue #$n: Sub-Issue von #$parent — übersprungen."
+            echo "Issue #$n: sub-issue of #$parent — skipped."
         elif grep -qE -- "-issue-$n(-|\$)" <<<"$sessions"; then
-            echo "Issue #$n: Session läuft schon — übersprungen."
+            echo "Issue #$n: session already running — skipped."
         elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
-            echo "Issue #$n: Branch issue-$n existiert schon auf GitHub — übersprungen."
+            echo "Issue #$n: branch issue-$n already exists on GitHub — skipped."
         elif [ "$dry_run" = 1 ]; then
-            echo "Issue #$n: würde Session starten (Branch issue-$n)."
+            echo "Issue #$n: would start a session (branch issue-$n)."
             started=$((started + 1))
         else
-            echo "Issue #$n: starte Session ..."
+            echo "Issue #$n: starting session ..."
             cmd_new --no-attach \
                 --prompt "Implement the GitHub Issue $n with the council." \
                 "issue-$n" "$repo"
@@ -302,28 +301,28 @@ cmd_issues() {
         fi
     done <<<"$issues"
     if [ "$dry_run" = 1 ]; then
-        echo "Dry-Run: $started Session(s) würden starten, nichts wurde angefasst."
+        echo "Dry run: $started session(s) would start, nothing was touched."
     else
-        echo "Fertig: $started neue Session(s) gestartet."
+        echo "Done: started $started new session(s)."
     fi
 }
 
 cmd_ls() {
-    echo "== Container =="
+    echo "== Containers =="
     docker ps -a --filter "label=rc.session" \
         --format 'table {{.Label "rc.session"}}\t{{.Status}}\t{{.Label "rc.repo"}}'
     if have herdr; then
         echo
-        echo "== herdr-Workspaces =="
+        echo "== herdr workspaces =="
         herdr workspace list 2>/dev/null \
             | jq -r '.result.workspaces[]? | "\(.workspace_id)\t\(.label)"' \
-            || echo "(herdr läuft gerade nicht)"
+            || echo "(herdr is not running right now)"
     fi
 }
 
 cmd_attach() {
     local session="${1:-}"
-    have herdr || die "herdr ist nicht installiert"
+    have herdr || die "herdr is not installed"
     if [ -n "$session" ]; then
         local ws; ws="$(herdr_workspace_id "$session")"
         [ -n "$ws" ] && herdr workspace focus "$ws" >/dev/null 2>&1 || true
@@ -346,44 +345,45 @@ cmd_shell() {
 }
 
 cmd_login() {
-    # Login auf dem Host erneuern und für alle Sessions bereitstellen.
-    # Laufende Sessions übernehmen die neue Datei binnen ~15 s von selbst
-    # (Sync-Loop im Container); Neustart ist nicht nötig.
+    # Renew the login on the host and make it available to all sessions.
+    # Running sessions pick up the new file within ~15 s on their own
+    # (sync loop in the container); no restart needed.
     local what="${1:-claude}" cred
     case "$what" in
     claude)
-        have claude || die "claude ist auf dem Host nicht installiert (npm install -g @anthropic-ai/claude-code)"
-        echo "Claude startet jetzt für den Login. Danach Claude beenden (/exit)."
+        have claude || die "claude is not installed on the host (npm install -g @anthropic-ai/claude-code)"
+        echo "Claude will now start for the login. Quit Claude afterwards (/exit)."
         claude /login || true
         cred="$HOME/.claude/.credentials.json"
-        [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
+        [ -f "$cred" ] || die "no login found ($cred missing) — did the login work?"
         mkdir -p "$AUTH_DIR/claude"
         cp -p "$cred" "$AUTH_DIR/claude/.credentials.json"
         chmod 600 "$AUTH_DIR/claude/.credentials.json"
-        # Seed mitziehen, damit auch ganz neue Sessions frisch starten
+        # Update the seed too, so brand-new sessions start fresh as well
         if [ -d "$SEED_DIR/claude" ]; then
             cp -p "$cred" "$SEED_DIR/claude/.credentials.json"
         fi
-        echo "Claude-Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
-        echo "Falls eine Session weiter meckert: Claude dort beenden und mit 'claude -c' neu starten."
+        echo "Claude login distributed. Running sessions pick it up in about 15 seconds."
+        echo "If a session still complains: quit Claude there and restart with 'claude -c'."
         ;;
     codex)
-        have codex || die "codex ist auf dem Host nicht installiert (npm install -g @openai/codex)"
-        # --device-auth: der Server ist headless — Code am eigenen Rechner
-        # im Browser eingeben statt localhost-Redirect auf dem Server
-        codex login --device-auth || die "codex login ist fehlgeschlagen"
+        have codex || die "codex is not installed on the host (npm install -g @openai/codex)"
+        # --device-auth: the server is headless — enter the code in the
+        # browser on your own machine instead of a localhost redirect
+        # on the server
+        codex login --device-auth || die "codex login failed"
         cred="$HOME/.codex/auth.json"
-        [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
+        [ -f "$cred" ] || die "no login found ($cred missing) — did the login work?"
         mkdir -p "$AUTH_DIR/codex"
         cp -p "$cred" "$AUTH_DIR/codex/auth.json"
         chmod 600 "$AUTH_DIR/codex/auth.json"
         if [ -d "$SEED_DIR/codex" ]; then
             cp -p "$cred" "$SEED_DIR/codex/auth.json"
         fi
-        echo "Codex-Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
+        echo "Codex login distributed. Running sessions pick it up in about 15 seconds."
         ;;
     *)
-        die "Unbekanntes Login-Ziel '$what' (rc login [claude|codex])"
+        die "unknown login target '$what' (rc login [claude|codex])"
         ;;
     esac
 }
@@ -393,11 +393,11 @@ cmd_rm() {
     local session cname ws
     for session in "$@"; do
         cname="$(container_name "$session")"
-        docker rm -f "$cname" >/dev/null 2>&1 && echo "Container $cname entfernt." \
-            || echo "Kein Container $cname (schon weg?)."
+        docker rm -f "$cname" >/dev/null 2>&1 && echo "Container $cname removed." \
+            || echo "No container $cname (already gone?)."
         ws="$(herdr_workspace_id "$session")"
         if [ -n "$ws" ]; then
-            herdr workspace close "$ws" >/dev/null 2>&1 && echo "herdr-Workspace '$session' geschlossen."
+            herdr workspace close "$ws" >/dev/null 2>&1 && echo "herdr workspace '$session' closed."
         fi
     done
 }

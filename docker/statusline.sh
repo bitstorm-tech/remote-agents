@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude-Code-Statusbar: Ordner | Branch *Änderungen | Modell (Effort) | Kontext%
+# Claude Code statusbar: directory | branch *changes | model (effort) | context%
 input=$(cat)
 current_dir=$(echo "$input" | jq -r '.workspace.current_dir')
 model=$(echo "$input" | jq -r '.model.display_name')

@@ -1,121 +1,120 @@
 # remote-agents
 
-KI-Coding-Sessions (Claude Code, Codex, …) auf einem Hetzner-Server. Jede Session:
+AI coding sessions (Claude Code, Codex, …) on a Hetzner server. Each session:
 
-- läuft in einem eigenen Docker-Container (Sandbox),
-- hat einen eigenen frischen `git clone` (kein Worktree),
-- lebt in einem eigenen herdr-Workspace und überlebt so das Schließen des Terminals,
-- kann den Council-Workflow nutzen (Codex ist im Image).
+- runs in its own Docker container (sandbox),
+- has its own fresh `git clone` (no worktree),
+- lives in its own herdr workspace and thus survives closing the terminal,
+- can use the council workflow (Codex is in the image).
 
-## Teile
+## Parts
 
-| Pfad | Was es ist |
+| Path | What it is |
 | --- | --- |
-| `docker/Dockerfile` | Session-Image: claude, codex, git, Tools |
-| `docker/entrypoint.sh` | Container-Start: Logins kopieren, Deploy-Key, Clone |
-| `bin/rc` | Session-Manager: `new` / `ls` / `attach` / `claude` / `shell` / `rm` / `login` / `build` |
-| `rc-home.example/` | Vorlage für `~/.rc` auf dem Server |
+| `docker/Dockerfile` | Session image: claude, codex, git, tools |
+| `docker/entrypoint.sh` | Container start: copy logins, deploy key, clone |
+| `bin/rc` | Session manager: `new` / `issues` / `ls` / `attach` / `claude` / `shell` / `rm` / `login` / `build` |
+| `rc-home.example/` | Template for `~/.rc` on the server |
 
-## Server einrichten (einmalig)
+## Server setup (one-time)
 
 ```bash
-# 1. Docker installieren (falls noch nicht da)
+# 1. Install Docker (if not there yet)
 sudo apt install docker.io
-sudo usermod -aG docker $USER   # danach neu einloggen
+sudo usermod -aG docker $USER   # log in again afterwards
 
-# 2. herdr + jq installieren
+# 2. Install herdr + jq
 curl -fsSL https://herdr.dev/install.sh | sh
 sudo apt-get install -y jq
 
-# 3. Dieses Repo auf den Server holen und rc verfügbar machen
-git clone <dieses-repo> ~/remote-agents
+# 3. Get this repo onto the server and make rc available
+git clone <this-repo> ~/remote-agents
 chmod +x ~/remote-agents/bin/rc ~/remote-agents/docker/entrypoint.sh
-ln -s ~/remote-agents/bin/rc ~/.local/bin/rc   # oder in PATH deiner Wahl
+ln -s ~/remote-agents/bin/rc ~/.local/bin/rc   # or any PATH dir you like
 
-# 4. Konfig-Ordner anlegen
+# 4. Create the config directory
 mkdir -p ~/.rc/keys ~/.rc/seed
 cp ~/remote-agents/rc-home.example/repos.conf ~/.rc/repos.conf
-# repos.conf editieren: eine Zeile pro Repo
+# edit repos.conf: one line per repo
 
-# 5. Logins einmal auf dem Server machen, dann als Seed ablegen
-npm install -g @anthropic-ai/claude-code @openai/codex   # nur fürs Login auf dem Host
-claude   # einloggen, dann beenden
-codex    # einloggen, dann beenden
+# 5. Do the logins once on the server, then store them as seeds
+npm install -g @anthropic-ai/claude-code @openai/codex   # only for the host login
+claude   # log in, then quit
+codex    # log in, then quit
 cp -r ~/.claude      ~/.rc/seed/claude
 cp    ~/.claude.json ~/.rc/seed/claude.json
 cp -r ~/.codex       ~/.rc/seed/codex
-sudo apt install gh   # GitHub CLI, fürs Login auf dem Host
-gh auth login         # GitHub-Login (für PRs/Issues in den Sessions)
+sudo apt install gh   # GitHub CLI, for the host login
+gh auth login         # GitHub login (for PRs/issues in the sessions)
 cp -r ~/.config/gh   ~/.rc/seed/gh
 
-# 6. Deploy-Keys ablegen (pro Repo, Name muss zu repos.conf passen)
-# Key erzeugen: ssh-keygen -t ed25519 -f ~/.rc/keys/mein-repo.key -N ""
-# Public-Key (.pub) bei GitHub als Deploy-Key eintragen (mit Schreibrecht!)
+# 6. Store deploy keys (per repo, name must match repos.conf)
+# Create a key: ssh-keygen -t ed25519 -f ~/.rc/keys/my-repo.key -N ""
+# Register the public key (.pub) on GitHub as a deploy key (with write access!)
 
-# 7. Sysbox installieren (gibt jeder Session ihr eigenes inneres Docker,
-#    damit Testcontainers-Integrationstests in der Sandbox laufen können)
-#    Achtung: vorher alle laufenden Sessions beenden (rc rm ...) und
-#    alle Container entfernen, sonst bricht der Installer ab:
+# 7. Install Sysbox (gives every session its own inner Docker,
+#    so Testcontainers integration tests can run inside the sandbox)
+#    Attention: end all running sessions first (rc rm ...) and remove
+#    all containers, otherwise the installer aborts:
 docker rm -f $(docker ps -a -q) 2>/dev/null || true
 wget https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb
 sudo apt install jq ./sysbox-ce_0.7.1.linux_amd64.deb
 
-# 7b. AppArmor-Ausnahme für Sysbox (nötig ab Ubuntu 25.04):
-#     Das fusermount3-Profil blockiert sonst Sysbox' FUSE-Mounts
-#     (Symptom: "fusermount3: mount failed: Permission denied" beim rc new,
-#     Details: https://github.com/nestybox/sysbox/issues/947)
+# 7b. AppArmor exception for Sysbox (needed as of Ubuntu 25.04):
+#     the fusermount3 profile otherwise blocks Sysbox's FUSE mounts
+#     (symptom: "fusermount3: mount failed: Permission denied" during rc new,
+#     details: https://github.com/nestybox/sysbox/issues/947)
 echo '  mount fstype=fuse -> /var/lib/sysboxfs/**/,' | sudo tee -a /etc/apparmor.d/local/fusermount3
 sudo apparmor_parser -r /etc/apparmor.d/fusermount3
 sudo systemctl restart sysbox
 
-# 8. Image bauen
+# 8. Build the image
 rc build
 ```
 
-## Täglicher Gebrauch
+## Daily use
 
 ```bash
 ssh server
-rc new fix-login mein-repo   # neue Session: Sandbox + Clone + Claude läuft
-rc issues                    # pro offenem Issue mit Label "ready-for-agent"
-                             # eine Session starten (Branch issue-<NR>);
-                             # Sub-Issues und schon Begonnenes: übersprungen
-rc issues --dry-run          # nur anzeigen, was starten würde
-rc attach                    # herdr öffnen, Tabs = Sessions
-# Detach in herdr: Ctrl+B Q  — alles läuft weiter
-rc ls                        # was läuft gerade?
-rc shell mein-repo-fix-login # Bash in der Sandbox
-rc rm mein-repo-fix-login    # Session komplett aufräumen
-rc login                     # bei "Login expired": einmal neu einloggen,
-                             # alle Sessions übernehmen es automatisch
-rc login codex               # dasselbe für den Codex-Login
+rc new fix-login my-repo     # new session: sandbox + clone + Claude running
+rc issues                    # start a session per open issue labeled
+                             # "ready-for-agent" (branch issue-<NO>);
+                             # sub-issues and work in progress: skipped
+rc issues --dry-run          # only show what would start
+rc attach                    # open herdr, tabs = sessions
+# Detach in herdr: Ctrl+B Q  — everything keeps running
+rc ls                        # what's running right now?
+rc shell my-repo-fix-login   # bash inside the sandbox
+rc rm my-repo-fix-login      # clean up the session completely
+rc login                     # on "Login expired": log in once,
+                             # all sessions pick it up automatically
+rc login codex               # same for the Codex login
 ```
 
-Claude läuft im Container mit `--permission-mode auto`: Harmloses läuft ohne
-Nachfrage durch, riskante Befehle erzeugen eine Rückfrage (erreichbar per
-Remote Control). Bewusst nicht Bypass — der Container schützt zwar den Host,
-enthält aber Deploy-Key und gh-Login, kann also nach draußen wirken.
+Claude runs in the container with `--permission-mode auto`: harmless things
+run without asking, risky commands trigger a question (reachable via Remote
+Control). Deliberately not bypass — the container protects the host, but it
+holds the deploy key and gh login, so it can act on the outside world.
 
-## Logins (Claude & Codex): wie sie frisch bleiben
+## Logins (Claude & Codex): how they stay fresh
 
-Alle Sessions teilen sich **eine** Credentials-Datei pro Tool: `~/.rc/auth/`
-wird read-write in jeden Container gemountet, ein Sync-Loop im Container
-gleicht die geteilten Dateien mit den lokalen ab (die neuere gewinnt):
+All sessions share **one** credentials file per tool: `~/.rc/auth/` is
+mounted read-write into every container, and a sync loop in the container
+reconciles the shared files with the local ones (the newer one wins):
 
 - Claude: `auth/claude/.credentials.json` ↔ `~/.claude/.credentials.json`
 - Codex:  `auth/codex/auth.json` ↔ `~/.codex/auth.json`
 
-Erneuert eine Session ihr OAuth-Token, bekommen alle anderen das neue Token
-automatisch — vorher hatte jede Session ihre eigene Kopie, und ein
-Token-Refresh in einer Session machte die Kopien der anderen ungültig
-("Login expired").
+When one session refreshes its OAuth token, all others get the new token
+automatically — previously every session had its own copy, and a token
+refresh in one session invalidated the others' copies ("Login expired").
 
-Kommt trotzdem mal "Login expired" (z.B. Login serverseitig widerrufen):
+If "Login expired" still shows up (e.g. login revoked server-side):
 
 ```bash
-rc login         # Claude: auf dem Host einloggen; Sessions ziehen es in ~15 s nach
-rc login codex   # Codex: dasselbe
+rc login         # Claude: log in on the host; sessions pick it up in ~15 s
+rc login codex   # Codex: same
 ```
 
-Meckert eine laufende Claude-Instanz danach immer noch, dort Claude beenden
-und mit `claude -c` (setzt die Unterhaltung fort) neu starten.
+If a running Claude instance still complains afterwards, quit Claude there
+and restart it with `claude -c` (continues the conversation).
