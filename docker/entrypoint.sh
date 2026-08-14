@@ -41,16 +41,18 @@ if [ -d /seed/gh ]; then
     log "gh-Login kopiert"
 fi
 
-# --- Statusbar einrichten (Skript kommt aus dem Image) ---
-mkdir -p "$HOME/.claude"
+# --- Statusbar + ELI5-Output-Style einrichten (kommen aus dem Image) ---
+mkdir -p "$HOME/.claude/output-styles"
 cp /usr/local/share/statusline.sh "$HOME/.claude/statusline.sh"
 chmod +x "$HOME/.claude/statusline.sh"
+cp /usr/local/share/eli5.md "$HOME/.claude/output-styles/eli5.md"
 settings="$HOME/.claude/settings.json"
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp="$(mktemp)"
-jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding: 0}' \
+jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding: 0}
+    | .outputStyle = "ELI5"' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-log "Statusbar eingerichtet"
+log "Statusbar + ELI5-Style eingerichtet"
 
 # --- SSH / Deploy-Key ---
 mkdir -p "$HOME/.ssh"

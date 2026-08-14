@@ -21,6 +21,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY statusline.sh /usr/local/share/statusline.sh
+COPY eli5.md /usr/local/share/eli5.md
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/share/statusline.sh \
     && mkdir -p /work && chown node:node /work
 
