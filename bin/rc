@@ -12,6 +12,7 @@
 #   rc shell <session>       Bash im Container öffnen
 #   rc rm <session>          Session beenden: Container weg, Workspace zu
 #   rc build                 Docker-Image bauen/aktualisieren
+#   rc upgrade               git pull + rc build in einem Rutsch
 #
 # Konfiguration unter $RC_HOME (Default: ~/.rc):
 #   repos.conf         Zeilen: "<name> <git-url>"
@@ -43,7 +44,8 @@ die()  { echo "rc: $*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
-    sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # Kopf-Kommentar dieses Skripts ausgeben (bis zur ersten Nicht-Kommentar-Zeile)
+    awk 'NR > 1 { if (/^#/) { sub(/^# ?/, ""); print } else exit }' "$SCRIPT_PATH"
     exit 1
 }
 
@@ -75,6 +77,13 @@ claude_cmd() {
 cmd_build() {
     docker build -t "$RC_IMAGE" "$PROJECT_DIR/docker"
     echo "Image '$RC_IMAGE' gebaut."
+}
+
+cmd_upgrade() {
+    echo "Hole neuesten Stand in $PROJECT_DIR ..."
+    git -C "$PROJECT_DIR" pull --ff-only
+    cmd_build
+    echo "Fertig. Gilt für neue Sessions (laufende behalten das alte Image)."
 }
 
 cmd_new() {
@@ -199,5 +208,6 @@ case "${1:-}" in
     shell)  shift; cmd_shell "$@" ;;
     rm)     shift; cmd_rm "$@" ;;
     build)  shift; cmd_build "$@" ;;
+    upgrade) shift; cmd_upgrade "$@" ;;
     *)      usage ;;
 esac
