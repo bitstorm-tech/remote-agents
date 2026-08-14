@@ -54,9 +54,19 @@ cp -r ~/.config/gh   ~/.rc/seed/gh
 
 # 7. Sysbox installieren (gibt jeder Session ihr eigenes inneres Docker,
 #    damit Testcontainers-Integrationstests in der Sandbox laufen können)
-#    Achtung: vorher alle laufenden Sessions beenden (rc rm ...)
+#    Achtung: vorher alle laufenden Sessions beenden (rc rm ...) und
+#    alle Container entfernen, sonst bricht der Installer ab:
+docker rm -f $(docker ps -a -q) 2>/dev/null || true
 wget https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb
 sudo apt install jq ./sysbox-ce_0.7.1.linux_amd64.deb
+
+# 7b. AppArmor-Ausnahme für Sysbox (nötig ab Ubuntu 25.04):
+#     Das fusermount3-Profil blockiert sonst Sysbox' FUSE-Mounts
+#     (Symptom: "fusermount3: mount failed: Permission denied" beim rc new,
+#     Details: https://github.com/nestybox/sysbox/issues/947)
+echo '  mount fstype=fuse -> /var/lib/sysboxfs/**/,' | sudo tee -a /etc/apparmor.d/local/fusermount3
+sudo apparmor_parser -r /etc/apparmor.d/fusermount3
+sudo systemctl restart sysbox
 
 # 8. Image bauen
 rc build
