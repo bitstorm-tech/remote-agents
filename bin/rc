@@ -7,6 +7,11 @@
 # Befehle:
 #   rc new [branch] [repo]   neue Session: Container + Clone + herdr-Tab + Claude
 #                            (repo weglassen = erstes Repo aus repos.conf)
+#   rc issues [repo]         für jedes offene GitHub-Issue mit Label
+#                            "ready-for-agent" eine Session starten (Branch
+#                            issue-<NR>); Issues, an denen schon gearbeitet
+#                            wird (laufende Session oder Remote-Branch
+#                            issue-<NR>*), werden übersprungen
 #   rc ls                    alle Sessions anzeigen
 #   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
 #   rc claude <session>      Claude (nochmal) im Container starten
@@ -71,6 +76,22 @@ default_repo() {
 
 container_name() { echo "rc-$1"; }
 
+repo_slug() {
+    # "owner/repo" aus einer Git-URL ziehen (ssh oder https)
+    echo "$1" | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##'
+}
+
+resolve_repo() {
+    # Repo-Name bestimmen: Argument oder Default aus repos.conf
+    local repo="$1"
+    if [ -z "$repo" ]; then
+        repo="$(default_repo)"
+        [ -n "$repo" ] || die "repos.conf ist leer — kein Default-Repo ($REPOS_FILE)"
+        echo "Repo: $repo (Default)" >&2
+    fi
+    echo "$repo"
+}
+
 container_repo() {
     docker inspect -f '{{ index .Config.Labels "rc.repo" }}' "$(container_name "$1")" 2>/dev/null \
         || die "Session '$1' nicht gefunden (rc ls zeigt alle)"
@@ -87,14 +108,18 @@ herdr_workspace_id() {
 }
 
 claude_cmd() {
-    local session="$1" repo="$2"
+    local session="$1" repo="$2" prompt="${3:-}"
     # HERDR_AGENT sagt herdr, dass in diesem "Wrapper" (docker exec) Claude
     # steckt — sonst bleibt die Agenten-Erkennung in der Sidebar leer.
     # -u node: im Sysbox-Modus läuft der Container als root (fürs innere
     # Docker) — Claude soll aber immer als normaler User laufen.
     # auto statt bypass: fragt praktisch nie, aber riskante Befehle (der
     # Container hat Deploy-Key + gh-Login) landen als Frage im Remote Control.
-    echo "HERDR_AGENT=claude docker exec -it -u node -w /work/$repo $(container_name "$session") claude --permission-mode auto"
+    local cmd="HERDR_AGENT=claude docker exec -it -u node -w /work/$repo $(container_name "$session") claude --permission-mode auto"
+    # Optionaler Start-Prompt; %q quotet ihn shell-sicher (der String wird
+    # später von einer Shell ausgeführt: herdr pane run bzw. eval)
+    [ -n "$prompt" ] && cmd="$cmd $(printf '%q' "$prompt")"
+    echo "$cmd"
 }
 
 cmd_build() {
@@ -110,12 +135,18 @@ cmd_upgrade() {
 }
 
 cmd_new() {
+    # Interne Flags (nutzt rc issues): --no-attach = nicht in herdr springen,
+    # --prompt <text> = Claude direkt mit diesem Auftrag starten
+    local attach=1 prompt=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --no-attach) attach=0; shift ;;
+            --prompt)    prompt="${2:-}"; shift 2 ;;
+            *) break ;;
+        esac
+    done
     local branch="${1:-}" repo="${2:-}"
-    if [ -z "$repo" ]; then
-        repo="$(default_repo)"
-        [ -n "$repo" ] || die "repos.conf ist leer — kein Default-Repo ($REPOS_FILE)"
-        echo "Repo: $repo (Default)"
-    fi
+    repo="$(resolve_repo "$repo")"
     local url; url="$(repo_url "$repo")"
     [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
 
@@ -186,13 +217,14 @@ cmd_new() {
         local ws pane ws_id
         if ws="$(herdr workspace create --cwd "$HOME" --label "$session" --no-focus 2>/dev/null)"; then
             pane="$(jq -r '.result.root_pane.pane_id' <<<"$ws")"
-            herdr pane run "$pane" "$(claude_cmd "$session" "$repo")" >/dev/null
+            herdr pane run "$pane" "$(claude_cmd "$session" "$repo" "$prompt")" >/dev/null
+            echo "Session '$session' läuft."
+            [ "$attach" = 1 ] || return
             # Workspace fokussieren und direkt reinspringen
             ws_id="$(jq -r 'if (.result.workspace | type) == "object"
                             then .result.workspace.workspace_id
                             else .result.workspace end' <<<"$ws")"
             [ -n "$ws_id" ] && herdr workspace focus "$ws_id" >/dev/null 2>&1 || true
-            echo "Session '$session' läuft."
             if env | grep -q '^HERDR'; then
                 return   # wir sind schon in herdr, Fokus reicht
             fi
@@ -203,6 +235,51 @@ cmd_new() {
         echo "Hinweis: herdr ist nicht installiert."
     fi
     echo "Container läuft trotzdem. Claude direkt starten mit: rc claude $session"
+}
+
+cmd_issues() {
+    # Für jedes offene Issue mit Label "ready-for-agent" eine Session starten.
+    # Übersprungen wird, woran erkennbar schon gearbeitet wird:
+    #   - eine Session mit "issue-<NR>" im Namen existiert (rc-Container), oder
+    #   - auf GitHub gibt es schon einen Branch "issue-<NR>..."
+    #     (deckt den Fall ab: Session fertig + entfernt, PR noch offen)
+    local repo="${1:-}"
+    repo="$(resolve_repo "$repo")"
+    local url; url="$(repo_url "$repo")"
+    [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
+    have gh || die "gh ist auf dem Host nicht installiert"
+    local slug; slug="$(repo_slug "$url")"
+
+    local issues
+    issues="$(gh issue list -R "$slug" --label ready-for-agent --state open \
+                  --json number --jq '.[].number')" \
+        || die "Konnte Issues nicht laden (gh issue list -R $slug)"
+    if [ -z "$issues" ]; then
+        echo "Keine offenen Issues mit Label 'ready-for-agent' in $slug."
+        return
+    fi
+
+    # Beides einmal vorab holen statt pro Issue: alle Sessions (auch gestoppte —
+    # deren Containername ist eh noch belegt) und alle Remote-Branches
+    local sessions branches
+    sessions="$(docker ps -a --filter label=rc.session --format '{{.Label "rc.session"}}')"
+    branches="$(gh api "repos/$slug/branches" --paginate --jq '.[].name' 2>/dev/null || true)"
+
+    local n started=0
+    for n in $issues; do
+        if grep -qE -- "-issue-$n(-|\$)" <<<"$sessions"; then
+            echo "Issue #$n: Session läuft schon — übersprungen."
+        elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
+            echo "Issue #$n: Branch issue-$n existiert schon auf GitHub — übersprungen."
+        else
+            echo "Issue #$n: starte Session ..."
+            cmd_new --no-attach \
+                --prompt "Implement the GitHub Issue $n with the council." \
+                "issue-$n" "$repo"
+            started=$((started + 1))
+        fi
+    done
+    echo "Fertig: $started neue Session(s) gestartet."
 }
 
 cmd_ls() {
@@ -301,6 +378,7 @@ cmd_rm() {
 
 case "${1:-}" in
     new)    shift; cmd_new "$@" ;;
+    issues) shift; cmd_issues "$@" ;;
     ls)     shift; cmd_ls "$@" ;;
     attach) shift; cmd_attach "$@" ;;
     claude) shift; cmd_claude "$@" ;;
