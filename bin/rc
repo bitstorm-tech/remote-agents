@@ -71,7 +71,9 @@ herdr_workspace_id() {
 
 claude_cmd() {
     local session="$1" repo="$2"
-    echo "docker exec -it -w /work/$repo $(container_name "$session") claude --dangerously-skip-permissions"
+    # HERDR_AGENT sagt herdr, dass in diesem "Wrapper" (docker exec) Claude
+    # steckt — sonst bleibt die Agenten-Erkennung in der Sidebar leer.
+    echo "HERDR_AGENT=claude docker exec -it -w /work/$repo $(container_name "$session") claude --dangerously-skip-permissions"
 }
 
 cmd_build() {
