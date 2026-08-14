@@ -73,6 +73,19 @@ jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding:
     "$settings" > "$tmp" && mv "$tmp" "$settings"
 log "Statusbar + ELI5-Style + Remote Control eingerichtet"
 
+# --- Startdialoge vorab beantworten (Ordner vertrauen + Bypass-Warnung):
+# --- der Container IST die Sandbox, die Fragen wären hier nur Klick-Arbeit ---
+claude_json="$HOME/.claude.json"
+[ -f "$claude_json" ] || echo '{}' > "$claude_json"
+tmp="$(mktemp)"
+jq --arg dir "/work/${REPO_NAME:-}" \
+    '.bypassPermissionsModeAccepted = true
+     | if $dir != "/work/" then
+           .projects[$dir] = ((.projects[$dir] // {}) + {hasTrustDialogAccepted: true})
+       else . end' \
+    "$claude_json" > "$tmp" && mv "$tmp" "$claude_json"
+log "Startdialoge vorab bestätigt"
+
 # --- SSH / Deploy-Key ---
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
