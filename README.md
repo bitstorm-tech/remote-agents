@@ -89,11 +89,10 @@ entschieden, der Container ist die Sandbox.
 
 ## Bekannte offene Punkte
 
-- `bin/rc` liest `herdr workspace list` per `jq` mit dem Pfad
-  `.result.workspaces[].workspace_id/.label` — den genauen JSON-Aufbau auf dem
-  Server einmal prüfen (`herdr workspace list | jq .`) und ggf. anpassen.
+- Beim ersten Claude-Start in einer Session bleibt **eine** Bestätigung übrig
+  (Bypass-Permissions-Warnung). Der interne Merker dafür ist nicht dokumentiert;
+  unser Vorab-Häkchen `bypassPermissionsModeAccepted` greift in aktuellen
+  Claude-Versionen offenbar nicht mehr. Bewusst so gelassen — einmal Enter.
 - Seeds werden beim Container-Start **kopiert** (nicht gemountet). Läuft eine
   Session sehr lange und das Claude-OAuth-Token läuft ab, hilft: auf dem Host
   neu einloggen, Seed neu kopieren, Session neu starten.
-- Council-Workflow: die Council-Konfiguration/Skills müssen noch ins Image oder
-  in die Seeds (je nachdem, wo der Workflow bei dir liegt).

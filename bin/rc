@@ -11,7 +11,7 @@
 #   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
 #   rc claude <session>      Claude (nochmal) im Container starten
 #   rc shell <session>       Bash im Container öffnen
-#   rc rm <session>          Session beenden: Container weg, Workspace zu
+#   rc rm <session> [...]    Session(s) beenden: Container weg, Workspace zu
 #   rc build                 Docker-Image bauen/aktualisieren
 #   rc upgrade               git pull + rc build in einem Rutsch
 #
@@ -21,6 +21,7 @@
 #   seed/claude/       Kopie von ~/.claude nach dem Claude-Login
 #   seed/claude.json   Kopie von ~/.claude.json
 #   seed/codex/        Kopie von ~/.codex nach dem Codex-Login
+#   seed/gh/           Kopie von ~/.config/gh nach dem gh-Login
 set -euo pipefail
 
 RC_HOME="${RC_HOME:-$HOME/.rc}"
@@ -69,9 +70,11 @@ container_repo() {
 }
 
 herdr_workspace_id() {
-    # Workspace-ID zu einem Label finden (leer, wenn nicht vorhanden)
+    # Workspace-ID zu einem Label finden (leer, wenn nicht vorhanden).
+    # "|| true": herdr kann installiert sein, aber gerade nicht laufen —
+    # das darf rc wegen "set -e" nicht abbrechen.
     have herdr || return 0
-    herdr workspace list 2>/dev/null \
+    { herdr workspace list 2>/dev/null || true; } \
         | jq -r --arg l "$1" '.result.workspaces[]? | select(.label == $l) | .workspace_id' \
         | head -n1
 }
@@ -214,15 +217,17 @@ cmd_shell() {
 }
 
 cmd_rm() {
-    local session="${1:-}"
-    [ -n "$session" ] || usage
-    local cname; cname="$(container_name "$session")"
-    docker rm -f "$cname" >/dev/null 2>&1 && echo "Container $cname entfernt." \
-        || echo "Kein Container $cname (schon weg?)."
-    local ws; ws="$(herdr_workspace_id "$session")"
-    if [ -n "$ws" ]; then
-        herdr workspace close "$ws" >/dev/null 2>&1 && echo "herdr-Workspace geschlossen."
-    fi
+    [ $# -ge 1 ] || usage
+    local session cname ws
+    for session in "$@"; do
+        cname="$(container_name "$session")"
+        docker rm -f "$cname" >/dev/null 2>&1 && echo "Container $cname entfernt." \
+            || echo "Kein Container $cname (schon weg?)."
+        ws="$(herdr_workspace_id "$session")"
+        if [ -n "$ws" ]; then
+            herdr workspace close "$ws" >/dev/null 2>&1 && echo "herdr-Workspace '$session' geschlossen."
+        fi
+    done
 }
 
 case "${1:-}" in
