@@ -103,8 +103,18 @@ cmd_new() {
     docker container inspect "$cname" >/dev/null 2>&1 \
         && die "Session '$session' existiert schon (rc rm $session zum Aufräumen)"
 
+    # Sysbox-Runtime da? Dann bekommt die Session ihr eigenes inneres Docker
+    # (für Testcontainers). Container startet dafür als root; der Entrypoint
+    # wechselt nach dem dockerd-Start selbst zum User node.
+    local runtime_args=()
+    if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q 'sysbox-runc'; then
+        runtime_args=(--runtime=sysbox-runc -u 0)
+    else
+        echo "Warnung: Sysbox fehlt auf dem Host — Session ohne inneres Docker (Testcontainers laufen nicht)."
+    fi
+
     echo "Starte Container $cname ..."
-    docker run -d --name "$cname" \
+    docker run -d --init --name "$cname" "${runtime_args[@]}" \
         --label "rc.session=$session" \
         --label "rc.repo=$repo" \
         -e REPO_URL="$url" \

@@ -20,6 +20,24 @@ set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
 
+# --- Läuft der Container als root (= Sysbox-Modus)? Dann inneres Docker
+# --- starten und danach als normaler User "node" von vorn beginnen. ---
+if [ "$(id -u)" = "0" ]; then
+    log "Sysbox-Modus: starte inneres Docker (dockerd) ..."
+    dockerd > /var/log/dockerd.log 2>&1 &
+    for _ in $(seq 1 30); do
+        [ -S /var/run/docker.sock ] && break
+        sleep 1
+    done
+    if [ -S /var/run/docker.sock ]; then
+        log "Inneres Docker läuft"
+    else
+        log "WARNUNG: dockerd kam nicht hoch (Log: /var/log/dockerd.log)"
+    fi
+    export HOME=/home/node USER=node
+    exec gosu node "$0" "$@"
+fi
+
 # --- Logins aus den Seeds kopieren (kopieren, nicht mounten,
 # --- damit parallele Sessions sich nicht in die Quere kommen) ---
 if [ -d /seed/claude ]; then

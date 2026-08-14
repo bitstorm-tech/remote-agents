@@ -9,6 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
 
+# Inneres Docker für Testcontainers (läuft nur mit Sysbox-Runtime auf dem Host)
+# + gosu für den Benutzerwechsel root -> node im Entrypoint
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && usermod -aG docker node
+
 # GitHub CLI (offizielles apt-Repo)
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \

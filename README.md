@@ -52,7 +52,13 @@ cp -r ~/.config/gh   ~/.rc/seed/gh
 # Key erzeugen: ssh-keygen -t ed25519 -f ~/.rc/keys/mein-repo.key -N ""
 # Public-Key (.pub) bei GitHub als Deploy-Key eintragen (mit Schreibrecht!)
 
-# 7. Image bauen
+# 7. Sysbox installieren (gibt jeder Session ihr eigenes inneres Docker,
+#    damit Testcontainers-Integrationstests in der Sandbox laufen können)
+#    Achtung: vorher alle laufenden Sessions beenden (rc rm ...)
+wget https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb
+sudo apt install jq ./sysbox-ce_0.7.1.linux_amd64.deb
+
+# 8. Image bauen
 rc build
 ```
 
