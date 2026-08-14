@@ -10,9 +10,10 @@
 #   rc issues [--dry-run] [repo]
 #                            für jedes offene GitHub-Issue mit Label
 #                            "ready-for-agent" eine Session starten (Branch
-#                            issue-<NR>); Issues, an denen schon gearbeitet
-#                            wird (laufende Session oder Remote-Branch
-#                            issue-<NR>*), werden übersprungen.
+#                            issue-<NR>); übersprungen werden Sub-Issues
+#                            (Issues mit Parent) und Issues, an denen schon
+#                            gearbeitet wird (laufende Session oder
+#                            Remote-Branch issue-<NR>*).
 #                            --dry-run: nur anzeigen, nichts starten
 #   rc ls                    alle Sessions anzeigen
 #   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
@@ -254,10 +255,21 @@ cmd_issues() {
     have gh || die "gh ist auf dem Host nicht installiert"
     local slug; slug="$(repo_slug "$url")"
 
+    # GraphQL statt "gh issue list": liefert pro Issue auch den Parent mit —
+    # Sub-Issues sind normale Issues und sollen keine eigene Session bekommen
+    # (die Session des Parents kümmert sich um das Gesamtpaket)
     local issues
-    issues="$(gh issue list -R "$slug" --label ready-for-agent --state open \
-                  --json number --jq '.[].number')" \
-        || die "Konnte Issues nicht laden (gh issue list -R $slug)"
+    issues="$(gh api graphql \
+        -f owner="${slug%/*}" -f name="${slug#*/}" \
+        -f query='query($owner: String!, $name: String!) {
+            repository(owner: $owner, name: $name) {
+                issues(states: OPEN, labels: ["ready-for-agent"], first: 100) {
+                    nodes { number parent { number } }
+                }
+            }
+        }' \
+        --jq '.data.repository.issues.nodes[] | "\(.number)\t\(.parent.number // "")"')" \
+        || die "Konnte Issues nicht laden (GraphQL, Repo $slug)"
     if [ -z "$issues" ]; then
         echo "Keine offenen Issues mit Label 'ready-for-agent' in $slug."
         return
@@ -269,9 +281,12 @@ cmd_issues() {
     sessions="$(docker ps -a --filter label=rc.session --format '{{.Label "rc.session"}}')"
     branches="$(gh api "repos/$slug/branches" --paginate --jq '.[].name' 2>/dev/null || true)"
 
-    local n started=0
-    for n in $issues; do
-        if grep -qE -- "-issue-$n(-|\$)" <<<"$sessions"; then
+    local n parent started=0
+    while IFS=$'\t' read -r n parent; do
+        [ -n "$n" ] || continue
+        if [ -n "$parent" ]; then
+            echo "Issue #$n: Sub-Issue von #$parent — übersprungen."
+        elif grep -qE -- "-issue-$n(-|\$)" <<<"$sessions"; then
             echo "Issue #$n: Session läuft schon — übersprungen."
         elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
             echo "Issue #$n: Branch issue-$n existiert schon auf GitHub — übersprungen."
@@ -285,7 +300,7 @@ cmd_issues() {
                 "issue-$n" "$repo"
             started=$((started + 1))
         fi
-    done
+    done <<<"$issues"
     if [ "$dry_run" = 1 ]; then
         echo "Dry-Run: $started Session(s) würden starten, nichts wurde angefasst."
     else
