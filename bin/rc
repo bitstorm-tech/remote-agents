@@ -5,7 +5,9 @@
 #   1 Session = 1 Docker-Container (Sandbox) + 1 herdr-Workspace
 #
 # Befehle:
-#   rc new <repo> [branch]   neue Session: Container + Clone + herdr-Tab + Claude
+#   rc new [repo] [branch]   neue Session: Container + Clone + herdr-Tab + Claude
+#                            (ohne repo: erstes Repo aus repos.conf ist Default,
+#                            "rc new mein-branch" geht also auch)
 #   rc ls                    alle Sessions anzeigen
 #   rc attach [session]      herdr öffnen (und ggf. Workspace fokussieren)
 #   rc claude <session>      Claude (nochmal) im Container starten
@@ -54,6 +56,12 @@ repo_url() {
     awk -v r="$1" '$1 == r { print $2; exit }' "$REPOS_FILE"
 }
 
+default_repo() {
+    # Erstes echtes Repo in repos.conf (Kommentare/Leerzeilen überspringen)
+    [ -f "$REPOS_FILE" ] || return 0
+    awk '$1 !~ /^#/ && NF >= 2 { print $1; exit }' "$REPOS_FILE"
+}
+
 container_name() { echo "rc-$1"; }
 
 container_repo() {
@@ -92,7 +100,17 @@ cmd_upgrade() {
 
 cmd_new() {
     local repo="${1:-}" branch="${2:-}"
-    [ -n "$repo" ] || usage
+    if [ -z "$repo" ]; then
+        repo="$(default_repo)"
+        [ -n "$repo" ] || die "repos.conf ist leer — kein Default-Repo ($REPOS_FILE)"
+        echo "Kein Repo angegeben — nehme Default: $repo"
+    elif [ -z "$(repo_url "$repo")" ] && [ -z "$branch" ]; then
+        # "$1" ist kein bekanntes Repo -> als Branch fürs Default-Repo werten
+        branch="$repo"
+        repo="$(default_repo)"
+        [ -n "$repo" ] || die "repos.conf ist leer — kein Default-Repo ($REPOS_FILE)"
+        echo "'$branch' ist kein Repo aus repos.conf — nehme Default-Repo '$repo' mit Branch '$branch'"
+    fi
     local url; url="$(repo_url "$repo")"
     [ -n "$url" ] || die "Repo '$repo' steht nicht in $REPOS_FILE"
 
