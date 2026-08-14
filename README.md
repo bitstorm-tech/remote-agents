@@ -13,7 +13,7 @@ KI-Coding-Sessions (Claude Code, Codex, …) auf einem Hetzner-Server. Jede Sess
 | --- | --- |
 | `docker/Dockerfile` | Session-Image: claude, codex, git, Tools |
 | `docker/entrypoint.sh` | Container-Start: Logins kopieren, Deploy-Key, Clone |
-| `bin/rc` | Session-Manager: `new` / `ls` / `attach` / `claude` / `shell` / `rm` / `build` |
+| `bin/rc` | Session-Manager: `new` / `ls` / `attach` / `claude` / `shell` / `rm` / `login` / `build` |
 | `rc-home.example/` | Vorlage für `~/.rc` auf dem Server |
 
 ## Server einrichten (einmalig)
@@ -82,6 +82,8 @@ rc attach                    # herdr öffnen, Tabs = Sessions
 rc ls                        # was läuft gerade?
 rc shell mein-repo-fix-login # Bash in der Sandbox
 rc rm mein-repo-fix-login    # Session komplett aufräumen
+rc login                     # bei "Login expired": einmal neu einloggen,
+                             # alle Sessions übernehmen es automatisch
 ```
 
 Claude läuft im Container mit `--permission-mode auto`: Harmloses läuft ohne
@@ -89,7 +91,21 @@ Nachfrage durch, riskante Befehle erzeugen eine Rückfrage (erreichbar per
 Remote Control). Bewusst nicht Bypass — der Container schützt zwar den Host,
 enthält aber Deploy-Key und gh-Login, kann also nach draußen wirken.
 
-## Bekannte offene Punkte
-- Seeds werden beim Container-Start **kopiert** (nicht gemountet). Läuft eine
-  Session sehr lange und das Claude-OAuth-Token läuft ab, hilft: auf dem Host
-  neu einloggen, Seed neu kopieren, Session neu starten.
+## Claude-Login: wie er frisch bleibt
+
+Alle Sessions teilen sich **eine** Credentials-Datei: `~/.rc/auth/claude/`
+wird read-write in jeden Container gemountet, ein Sync-Loop im Container
+gleicht sie mit `~/.claude/.credentials.json` ab (die neuere gewinnt).
+Erneuert eine Session ihr OAuth-Token, bekommen alle anderen das neue Token
+automatisch — vorher hatte jede Session ihre eigene Kopie, und ein
+Token-Refresh in einer Session machte die Kopien der anderen ungültig
+("Login expired").
+
+Kommt trotzdem mal "Login expired" (z.B. Login serverseitig widerrufen):
+
+```bash
+rc login   # auf dem Host einloggen; alle Sessions ziehen es in ~15 s nach
+```
+
+Meckert eine laufende Claude-Instanz danach immer noch, dort Claude beenden
+und mit `claude -c` (setzt die Unterhaltung fort) neu starten.

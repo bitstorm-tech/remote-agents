@@ -12,6 +12,8 @@
 #   rc claude <session>      Claude (nochmal) im Container starten
 #   rc shell <session>       Bash im Container öffnen
 #   rc rm <session> [...]    Session(s) beenden: Container weg, Workspace zu
+#   rc login                 Claude-Login erneuern (bei "Login expired");
+#                            laufende Sessions übernehmen ihn automatisch
 #   rc build                 Docker-Image bauen/aktualisieren
 #   rc upgrade               git pull + rc build in einem Rutsch
 #
@@ -22,6 +24,9 @@
 #   seed/claude.json   Kopie von ~/.claude.json
 #   seed/codex/        Kopie von ~/.codex nach dem Codex-Login
 #   seed/gh/           Kopie von ~/.config/gh nach dem gh-Login
+#   auth/claude/       geteilte Claude-Credentials aller Sessions
+#                      (rw in jeden Container gemountet; rc login schreibt
+#                      hierher, die Sessions syncen sich selbst)
 set -euo pipefail
 
 RC_HOME="${RC_HOME:-$HOME/.rc}"
@@ -29,6 +34,7 @@ RC_IMAGE="${RC_IMAGE:-rc-session}"
 REPOS_FILE="$RC_HOME/repos.conf"
 SEED_DIR="$RC_HOME/seed"
 KEYS_DIR="$RC_HOME/keys"
+AUTH_DIR="$RC_HOME/auth"
 # Symlinks auflösen (rc liegt z.B. als Link in ~/.local/bin)
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 while [ -L "$SCRIPT_PATH" ]; do
@@ -116,6 +122,16 @@ cmd_new() {
     [ -f "$key" ] || die "Deploy-Key fehlt: $key"
     [ -d "$SEED_DIR/claude" ] || die "Claude-Seed fehlt: $SEED_DIR/claude (siehe README, Schritt 'Logins')"
 
+    # Geteilte Claude-Credentials: eine Datei für alle Sessions, damit ein
+    # Token-Refresh in einer Session nicht die anderen ungültig macht.
+    # Beim allerersten Mal vom Host-Login übernehmen, falls vorhanden.
+    mkdir -p "$AUTH_DIR/claude"
+    if [ ! -f "$AUTH_DIR/claude/.credentials.json" ] && [ -f "$HOME/.claude/.credentials.json" ]; then
+        cp -p "$HOME/.claude/.credentials.json" "$AUTH_DIR/claude/.credentials.json"
+        chmod 600 "$AUTH_DIR/claude/.credentials.json"
+        echo "Geteilte Claude-Credentials aus dem Host-Login angelegt."
+    fi
+
     local session="$repo${branch:+-$branch}"
     session="$(echo "$session" | sed 's/[^a-zA-Z0-9-]/-/g')"
     local cname; cname="$(container_name "$session")"
@@ -141,6 +157,7 @@ cmd_new() {
         -e REPO_NAME="$repo" \
         -e BRANCH="$branch" \
         -v "$SEED_DIR":/seed:ro \
+        -v "$AUTH_DIR":/auth \
         -v "$key":/deploy_key:ro \
         "$RC_IMAGE" >/dev/null
 
@@ -218,6 +235,26 @@ cmd_shell() {
     docker exec -it -u node -w "/work/$repo" "$(container_name "$session")" bash
 }
 
+cmd_login() {
+    # Claude-Login auf dem Host erneuern und für alle Sessions bereitstellen.
+    # Laufende Sessions übernehmen die neue Datei binnen ~15 s von selbst
+    # (Sync-Loop im Container); Neustart ist nicht nötig.
+    have claude || die "claude ist auf dem Host nicht installiert (npm install -g @anthropic-ai/claude-code)"
+    echo "Claude startet jetzt für den Login. Danach Claude beenden (/exit)."
+    claude /login || true
+    local cred="$HOME/.claude/.credentials.json"
+    [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
+    mkdir -p "$AUTH_DIR/claude"
+    cp -p "$cred" "$AUTH_DIR/claude/.credentials.json"
+    chmod 600 "$AUTH_DIR/claude/.credentials.json"
+    # Seed mitziehen, damit auch ganz neue Sessions frisch starten
+    if [ -d "$SEED_DIR/claude" ]; then
+        cp -p "$cred" "$SEED_DIR/claude/.credentials.json"
+    fi
+    echo "Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
+    echo "Falls eine Session weiter meckert: Claude dort beenden und mit 'claude -c' neu starten."
+}
+
 cmd_rm() {
     [ $# -ge 1 ] || usage
     local session cname ws
@@ -239,6 +276,7 @@ case "${1:-}" in
     claude) shift; cmd_claude "$@" ;;
     shell)  shift; cmd_shell "$@" ;;
     rm)     shift; cmd_rm "$@" ;;
+    login)  shift; cmd_login "$@" ;;
     build)  shift; cmd_build "$@" ;;
     upgrade) shift; cmd_upgrade "$@" ;;
     *)      usage ;;

@@ -16,6 +16,12 @@
 #   /seed/gh           -> wird nach ~/.config/gh kopiert (gh-Login)
 #   /deploy_key        -> SSH-Deploy-Key fürs Repo (eigener Mount,
 #                         darf nicht in /seed liegen: /seed ist read-only)
+#
+# Erwarteter Mount (read-write):
+#   /auth/claude       -> geteilte Claude-Credentials für alle Sessions
+#                         (ein Sync-Loop hält ~/.claude/.credentials.json
+#                         und /auth/claude/.credentials.json gegenseitig
+#                         aktuell — die neuere Datei gewinnt)
 set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -57,6 +63,45 @@ if [ -d /seed/gh ]; then
     mkdir -p "$HOME/.config/gh"
     cp -r /seed/gh/. "$HOME/.config/gh/"
     log "gh-Login kopiert"
+fi
+
+# --- Geteilte Claude-Credentials (/auth) ---
+# Ohne das hätte jede Session ihre eigene Token-Kopie. Erneuert eine Session
+# ihr Token, rotiert der Server das Refresh-Token — die Kopien der anderen
+# Sessions werden ungültig ("Login expired"). Deshalb: eine gemeinsame Datei
+# auf dem Host, die alle Sessions (und "rc login") teilen.
+AUTH_FILE=/auth/claude/.credentials.json
+LOCAL_CRED="$HOME/.claude/.credentials.json"
+copy_cred() {
+    # Atomar kopieren (halbe JSON-Dateien darf nie jemand lesen) und die
+    # mtime erhalten — der Sync-Loop vergleicht per -nt, ein frischer
+    # Zeitstempel würde endloses Hin-und-her-Kopieren auslösen.
+    local src="$1" dst="$2" tmp
+    tmp="$(mktemp "$(dirname "$dst")/.cred.XXXXXX")" || return 1
+    cp -p "$src" "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dst"
+}
+if [ -d /auth ]; then
+    mkdir -p /auth/claude "$HOME/.claude"
+    if [ -f "$AUTH_FILE" ]; then
+        copy_cred "$AUTH_FILE" "$LOCAL_CRED"
+        log "Geteilte Claude-Credentials übernommen"
+    elif [ -f "$LOCAL_CRED" ]; then
+        # Erste Session: die geteilte Datei aus dem Seed-Login anlegen
+        copy_cred "$LOCAL_CRED" "$AUTH_FILE"
+        log "Geteilte Claude-Credentials aus Seed angelegt"
+    fi
+    (
+        # "|| true": ein einzelner fehlgeschlagener Kopierversuch (z.B. Mount
+        # kurz busy) darf den Sync-Loop nicht beenden (set -e gilt auch hier)
+        while sleep 15; do
+            if [ -f "$AUTH_FILE" ] && [ "$AUTH_FILE" -nt "$LOCAL_CRED" ]; then
+                copy_cred "$AUTH_FILE" "$LOCAL_CRED" || true
+            elif [ -f "$LOCAL_CRED" ] && [ "$LOCAL_CRED" -nt "$AUTH_FILE" ]; then
+                copy_cred "$LOCAL_CRED" "$AUTH_FILE" || true
+            fi
+        done
+    ) &
+    log "Credentials-Sync läuft"
 fi
 
 # --- Statusbar + ELI5-Output-Style einrichten (kommen aus dem Image) ---
