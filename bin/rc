@@ -12,7 +12,7 @@
 #   rc claude <session>      Claude (nochmal) im Container starten
 #   rc shell <session>       Bash im Container öffnen
 #   rc rm <session> [...]    Session(s) beenden: Container weg, Workspace zu
-#   rc login                 Claude-Login erneuern (bei "Login expired");
+#   rc login [claude|codex]  Login erneuern (bei "Login expired"), Default claude;
 #                            laufende Sessions übernehmen ihn automatisch
 #   rc build                 Docker-Image bauen/aktualisieren
 #   rc upgrade               git pull + rc build in einem Rutsch
@@ -25,6 +25,7 @@
 #   seed/codex/        Kopie von ~/.codex nach dem Codex-Login
 #   seed/gh/           Kopie von ~/.config/gh nach dem gh-Login
 #   auth/claude/       geteilte Claude-Credentials aller Sessions
+#   auth/codex/        geteilte Codex-Credentials aller Sessions
 #                      (rw in jeden Container gemountet; rc login schreibt
 #                      hierher, die Sessions syncen sich selbst)
 set -euo pipefail
@@ -122,15 +123,21 @@ cmd_new() {
     [ -f "$key" ] || die "Deploy-Key fehlt: $key"
     [ -d "$SEED_DIR/claude" ] || die "Claude-Seed fehlt: $SEED_DIR/claude (siehe README, Schritt 'Logins')"
 
-    # Geteilte Claude-Credentials: eine Datei für alle Sessions, damit ein
-    # Token-Refresh in einer Session nicht die anderen ungültig macht.
-    # Beim allerersten Mal vom Host-Login übernehmen, falls vorhanden.
-    mkdir -p "$AUTH_DIR/claude"
-    if [ ! -f "$AUTH_DIR/claude/.credentials.json" ] && [ -f "$HOME/.claude/.credentials.json" ]; then
-        cp -p "$HOME/.claude/.credentials.json" "$AUTH_DIR/claude/.credentials.json"
-        chmod 600 "$AUTH_DIR/claude/.credentials.json"
-        echo "Geteilte Claude-Credentials aus dem Host-Login angelegt."
-    fi
+    # Geteilte Credentials (Claude + Codex): eine Datei für alle Sessions,
+    # damit ein Token-Refresh in einer Session nicht die anderen ungültig
+    # macht. Beim allerersten Mal vom Host-Login übernehmen, falls vorhanden.
+    local pair shared_file host_file
+    mkdir -p "$AUTH_DIR/claude" "$AUTH_DIR/codex"
+    for pair in "claude/.credentials.json:$HOME/.claude/.credentials.json" \
+                "codex/auth.json:$HOME/.codex/auth.json"; do
+        shared_file="$AUTH_DIR/${pair%%:*}"
+        host_file="${pair#*:}"
+        if [ ! -f "$shared_file" ] && [ -f "$host_file" ]; then
+            cp -p "$host_file" "$shared_file"
+            chmod 600 "$shared_file"
+            echo "Geteilte Credentials aus dem Host-Login angelegt: $shared_file"
+        fi
+    done
 
     local session="$repo${branch:+-$branch}"
     session="$(echo "$session" | sed 's/[^a-zA-Z0-9-]/-/g')"
@@ -236,23 +243,44 @@ cmd_shell() {
 }
 
 cmd_login() {
-    # Claude-Login auf dem Host erneuern und für alle Sessions bereitstellen.
+    # Login auf dem Host erneuern und für alle Sessions bereitstellen.
     # Laufende Sessions übernehmen die neue Datei binnen ~15 s von selbst
     # (Sync-Loop im Container); Neustart ist nicht nötig.
-    have claude || die "claude ist auf dem Host nicht installiert (npm install -g @anthropic-ai/claude-code)"
-    echo "Claude startet jetzt für den Login. Danach Claude beenden (/exit)."
-    claude /login || true
-    local cred="$HOME/.claude/.credentials.json"
-    [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
-    mkdir -p "$AUTH_DIR/claude"
-    cp -p "$cred" "$AUTH_DIR/claude/.credentials.json"
-    chmod 600 "$AUTH_DIR/claude/.credentials.json"
-    # Seed mitziehen, damit auch ganz neue Sessions frisch starten
-    if [ -d "$SEED_DIR/claude" ]; then
-        cp -p "$cred" "$SEED_DIR/claude/.credentials.json"
-    fi
-    echo "Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
-    echo "Falls eine Session weiter meckert: Claude dort beenden und mit 'claude -c' neu starten."
+    local what="${1:-claude}" cred
+    case "$what" in
+    claude)
+        have claude || die "claude ist auf dem Host nicht installiert (npm install -g @anthropic-ai/claude-code)"
+        echo "Claude startet jetzt für den Login. Danach Claude beenden (/exit)."
+        claude /login || true
+        cred="$HOME/.claude/.credentials.json"
+        [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
+        mkdir -p "$AUTH_DIR/claude"
+        cp -p "$cred" "$AUTH_DIR/claude/.credentials.json"
+        chmod 600 "$AUTH_DIR/claude/.credentials.json"
+        # Seed mitziehen, damit auch ganz neue Sessions frisch starten
+        if [ -d "$SEED_DIR/claude" ]; then
+            cp -p "$cred" "$SEED_DIR/claude/.credentials.json"
+        fi
+        echo "Claude-Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
+        echo "Falls eine Session weiter meckert: Claude dort beenden und mit 'claude -c' neu starten."
+        ;;
+    codex)
+        have codex || die "codex ist auf dem Host nicht installiert (npm install -g @openai/codex)"
+        codex login || die "codex login ist fehlgeschlagen"
+        cred="$HOME/.codex/auth.json"
+        [ -f "$cred" ] || die "Kein Login gefunden ($cred fehlt) — hat der Login geklappt?"
+        mkdir -p "$AUTH_DIR/codex"
+        cp -p "$cred" "$AUTH_DIR/codex/auth.json"
+        chmod 600 "$AUTH_DIR/codex/auth.json"
+        if [ -d "$SEED_DIR/codex" ]; then
+            cp -p "$cred" "$SEED_DIR/codex/auth.json"
+        fi
+        echo "Codex-Login verteilt. Laufende Sessions übernehmen ihn in ca. 15 Sekunden."
+        ;;
+    *)
+        die "Unbekanntes Login-Ziel '$what' (rc login [claude|codex])"
+        ;;
+    esac
 }
 
 cmd_rm() {

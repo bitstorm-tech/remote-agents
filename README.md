@@ -84,6 +84,7 @@ rc shell mein-repo-fix-login # Bash in der Sandbox
 rc rm mein-repo-fix-login    # Session komplett aufräumen
 rc login                     # bei "Login expired": einmal neu einloggen,
                              # alle Sessions übernehmen es automatisch
+rc login codex               # dasselbe für den Codex-Login
 ```
 
 Claude läuft im Container mit `--permission-mode auto`: Harmloses läuft ohne
@@ -91,11 +92,15 @@ Nachfrage durch, riskante Befehle erzeugen eine Rückfrage (erreichbar per
 Remote Control). Bewusst nicht Bypass — der Container schützt zwar den Host,
 enthält aber Deploy-Key und gh-Login, kann also nach draußen wirken.
 
-## Claude-Login: wie er frisch bleibt
+## Logins (Claude & Codex): wie sie frisch bleiben
 
-Alle Sessions teilen sich **eine** Credentials-Datei: `~/.rc/auth/claude/`
+Alle Sessions teilen sich **eine** Credentials-Datei pro Tool: `~/.rc/auth/`
 wird read-write in jeden Container gemountet, ein Sync-Loop im Container
-gleicht sie mit `~/.claude/.credentials.json` ab (die neuere gewinnt).
+gleicht die geteilten Dateien mit den lokalen ab (die neuere gewinnt):
+
+- Claude: `auth/claude/.credentials.json` ↔ `~/.claude/.credentials.json`
+- Codex:  `auth/codex/auth.json` ↔ `~/.codex/auth.json`
+
 Erneuert eine Session ihr OAuth-Token, bekommen alle anderen das neue Token
 automatisch — vorher hatte jede Session ihre eigene Kopie, und ein
 Token-Refresh in einer Session machte die Kopien der anderen ungültig
@@ -104,7 +109,8 @@ Token-Refresh in einer Session machte die Kopien der anderen ungültig
 Kommt trotzdem mal "Login expired" (z.B. Login serverseitig widerrufen):
 
 ```bash
-rc login   # auf dem Host einloggen; alle Sessions ziehen es in ~15 s nach
+rc login         # Claude: auf dem Host einloggen; Sessions ziehen es in ~15 s nach
+rc login codex   # Codex: dasselbe
 ```
 
 Meckert eine laufende Claude-Instanz danach immer noch, dort Claude beenden

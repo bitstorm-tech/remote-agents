@@ -22,6 +22,7 @@
 #                         (ein Sync-Loop hält ~/.claude/.credentials.json
 #                         und /auth/claude/.credentials.json gegenseitig
 #                         aktuell — die neuere Datei gewinnt)
+#   /auth/codex        -> dito für Codex (~/.codex/auth.json)
 set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -65,13 +66,13 @@ if [ -d /seed/gh ]; then
     log "gh-Login kopiert"
 fi
 
-# --- Geteilte Claude-Credentials (/auth) ---
+# --- Geteilte Credentials (/auth): Claude + Codex ---
 # Ohne das hätte jede Session ihre eigene Token-Kopie. Erneuert eine Session
 # ihr Token, rotiert der Server das Refresh-Token — die Kopien der anderen
 # Sessions werden ungültig ("Login expired"). Deshalb: eine gemeinsame Datei
-# auf dem Host, die alle Sessions (und "rc login") teilen.
-AUTH_FILE=/auth/claude/.credentials.json
-LOCAL_CRED="$HOME/.claude/.credentials.json"
+# pro Tool auf dem Host, die alle Sessions (und "rc login") teilen.
+AUTH_PAIRS="/auth/claude/.credentials.json:$HOME/.claude/.credentials.json
+/auth/codex/auth.json:$HOME/.codex/auth.json"
 copy_cred() {
     # Atomar kopieren (halbe JSON-Dateien darf nie jemand lesen) und die
     # mtime erhalten — der Sync-Loop vergleicht per -nt, ein frischer
@@ -80,28 +81,37 @@ copy_cred() {
     tmp="$(mktemp "$(dirname "$dst")/.cred.XXXXXX")" || return 1
     cp -p "$src" "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dst"
 }
-if [ -d /auth ]; then
-    mkdir -p /auth/claude "$HOME/.claude"
-    if [ -f "$AUTH_FILE" ]; then
-        copy_cred "$AUTH_FILE" "$LOCAL_CRED"
-        log "Geteilte Claude-Credentials übernommen"
-    elif [ -f "$LOCAL_CRED" ]; then
-        # Erste Session: die geteilte Datei aus dem Seed-Login anlegen
-        copy_cred "$LOCAL_CRED" "$AUTH_FILE"
-        log "Geteilte Claude-Credentials aus Seed angelegt"
+sync_pair() {
+    # "|| true": ein einzelner fehlgeschlagener Kopierversuch (z.B. Mount
+    # kurz busy) darf den Aufrufer nicht beenden (set -e)
+    local shared="$1" local_file="$2"
+    if [ -f "$shared" ] && [ "$shared" -nt "$local_file" ]; then
+        copy_cred "$shared" "$local_file" || true
+    elif [ -f "$local_file" ] && [ "$local_file" -nt "$shared" ]; then
+        copy_cred "$local_file" "$shared" || true
     fi
+}
+if [ -d /auth ]; then
+    mkdir -p /auth/claude /auth/codex "$HOME/.claude" "$HOME/.codex"
+    while IFS=: read -r shared local_file; do
+        if [ -f "$shared" ]; then
+            # Geteilte Datei gewinnt beim Start immer gegen die Seed-Kopie
+            copy_cred "$shared" "$local_file"
+            log "Geteilte Credentials übernommen: $shared"
+        elif [ -f "$local_file" ]; then
+            # Erste Session: die geteilte Datei aus dem Seed-Login anlegen
+            copy_cred "$local_file" "$shared"
+            log "Geteilte Credentials aus Seed angelegt: $shared"
+        fi
+    done <<<"$AUTH_PAIRS"
     (
-        # "|| true": ein einzelner fehlgeschlagener Kopierversuch (z.B. Mount
-        # kurz busy) darf den Sync-Loop nicht beenden (set -e gilt auch hier)
         while sleep 15; do
-            if [ -f "$AUTH_FILE" ] && [ "$AUTH_FILE" -nt "$LOCAL_CRED" ]; then
-                copy_cred "$AUTH_FILE" "$LOCAL_CRED" || true
-            elif [ -f "$LOCAL_CRED" ] && [ "$LOCAL_CRED" -nt "$AUTH_FILE" ]; then
-                copy_cred "$LOCAL_CRED" "$AUTH_FILE" || true
-            fi
+            while IFS=: read -r shared local_file; do
+                sync_pair "$shared" "$local_file"
+            done <<<"$AUTH_PAIRS"
         done
     ) &
-    log "Credentials-Sync läuft"
+    log "Credentials-Sync läuft (claude + codex)"
 fi
 
 # --- Statusbar + ELI5-Output-Style einrichten (kommen aus dem Image) ---
