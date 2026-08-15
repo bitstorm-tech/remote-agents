@@ -295,9 +295,11 @@ cmd_issues() {
             started=$((started + 1))
         else
             echo "Issue #$n: starting session ..."
+            # </dev/null: commands inside cmd_new (docker, herdr) must not
+            # swallow the issue list this loop is reading from stdin
             cmd_new --no-attach \
                 --prompt "Implement the GitHub Issue $n with the council." \
-                "issue-$n" "$repo"
+                "issue-$n" "$repo" </dev/null
             started=$((started + 1))
         fi
     done <<<"$issues"
