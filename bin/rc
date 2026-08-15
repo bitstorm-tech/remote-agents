@@ -19,6 +19,7 @@
 #   rc claude <session>      start Claude (again) in the container
 #   rc shell <session>       open a bash shell in the container
 #   rc rm <session> [...]    end session(s): remove container, close workspace
+#   rc rm --all              end all sessions
 #   rc login [claude|codex]  renew a login (on "Login expired"), default claude;
 #                            running sessions pick it up automatically
 #   rc build                 build/update the Docker image
@@ -389,6 +390,14 @@ cmd_login() {
 }
 
 cmd_rm() {
+    if [ "${1:-}" = "--all" ]; then
+        # Replace the arguments with every existing session
+        set -- $(docker ps -a --filter label=rc.session --format '{{.Label "rc.session"}}')
+        if [ $# -eq 0 ]; then
+            echo "No sessions found."
+            return
+        fi
+    fi
     [ $# -ge 1 ] || usage
     local session cname ws
     for session in "$@"; do
