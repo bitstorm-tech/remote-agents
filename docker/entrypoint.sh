@@ -66,6 +66,20 @@ if [ -d /seed/gh ]; then
     log "gh login copied"
 fi
 
+# --- Turn off Codex's own sandbox: Landlock is not available inside
+# --- Docker, so Codex cannot even read files. The container itself is
+# --- the sandbox, so nothing is lost. ---
+mkdir -p "$HOME/.codex"
+codex_cfg="$HOME/.codex/config.toml"
+if ! grep -q '^sandbox_mode' "$codex_cfg" 2>/dev/null; then
+    # Prepend, don't append: a top-level TOML key appended after a
+    # [section] header would land inside that section
+    tmp="$(mktemp)"
+    { echo 'sandbox_mode = "danger-full-access"'; cat "$codex_cfg" 2>/dev/null; } > "$tmp"
+    mv "$tmp" "$codex_cfg"
+    log "Codex sandbox disabled (container is the sandbox)"
+fi
+
 # --- Shared credentials (/auth): Claude + Codex ---
 # Without this, every session would have its own token copy. When one
 # session refreshes its token, the server rotates the refresh token — the
