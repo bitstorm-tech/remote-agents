@@ -222,7 +222,7 @@ cmd_new() {
             pane="$(jq -r '.result.root_pane.pane_id' <<<"$ws")"
             herdr pane run "$pane" "$(claude_cmd "$session" "$repo" "$prompt")" >/dev/null
             echo "Session '$session' is running."
-            [ "$attach" = 1 ] || return
+            [ "$attach" = 1 ] || return 0   # bare "return" would pass on status 1 → set -e kills rc issues
             # Focus the workspace and jump right in
             ws_id="$(jq -r 'if (.result.workspace | type) == "object"
                             then .result.workspace.workspace_id
