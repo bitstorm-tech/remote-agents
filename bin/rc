@@ -126,7 +126,8 @@ claude_cmd() {
 }
 
 cmd_build() {
-    docker build -t "$RC_IMAGE" "$PROJECT_DIR/docker"
+    # CLI_REFRESH busts the cache for the claude/codex install layer only
+    docker build --build-arg "CLI_REFRESH=$(date +%s)" -t "$RC_IMAGE" "$PROJECT_DIR/docker"
     echo "Image '$RC_IMAGE' built."
 }
 

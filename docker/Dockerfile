@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         less vim nano procps unzip build-essential python3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
-
 # Inner Docker for Testcontainers (only works with the Sysbox runtime on the host)
 # + gosu for the root -> node user switch in the entrypoint
 RUN apt-get update && apt-get install -y --no-install-recommends docker.io gosu \
@@ -24,6 +22,14 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
         > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
+
+# Claude + Codex CLIs. CLI_REFRESH is a cache-buster: `rc build` passes the
+# current timestamp so this layer (and only this one onward) is rebuilt and
+# always pulls the latest versions.
+ARG CLI_REFRESH=0
+RUN echo "refresh=$CLI_REFRESH" \
+    && npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest \
+    && npm cache clean --force
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY statusline.sh /usr/local/share/statusline.sh
