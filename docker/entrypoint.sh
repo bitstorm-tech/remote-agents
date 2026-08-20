@@ -128,19 +128,18 @@ if [ -d /auth ]; then
     log "Credentials sync running (claude + codex)"
 fi
 
-# --- Set up statusbar + ELI5 output style (both come from the image) ---
-mkdir -p "$HOME/.claude/output-styles"
+# --- Set up statusbar + Concise output style (statusline comes from the image) ---
+mkdir -p "$HOME/.claude"
 cp /usr/local/share/statusline.sh "$HOME/.claude/statusline.sh"
 chmod +x "$HOME/.claude/statusline.sh"
-cp /usr/local/share/eli5.md "$HOME/.claude/output-styles/eli5.md"
 settings="$HOME/.claude/settings.json"
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp="$(mktemp)"
 jq '.statusLine = {type: "command", command: "~/.claude/statusline.sh", padding: 0}
-    | .outputStyle = "ELI5"
+    | .outputStyle = "Concise"
     | .remoteControlAtStartup = true' \
     "$settings" > "$tmp" && mv "$tmp" "$settings"
-log "Statusbar + ELI5 style + Remote Control set up"
+log "Statusbar + Concise style + Remote Control set up"
 
 # --- Pre-answer the trust dialog ("Trust this folder?"):
 # --- the container is a throwaway sandbox, the question would just be click work ---
