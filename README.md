@@ -80,7 +80,7 @@ rc new fix-login my-repo     # new session: sandbox + clone + Claude running
 rc issues                    # start a session per open issue labeled
                              # "ready-for-agent" (branch issue-<NO>);
                              # sub-issues and work in progress: skipped
-rc issues --dry-run          # only show what would start
+rc issues list               # only show what would start
 rc attach                    # open herdr, tabs = sessions
 # Detach in herdr: Ctrl+B Q  — everything keeps running
 rc ls                        # what's running right now?

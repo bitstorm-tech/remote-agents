@@ -7,13 +7,12 @@
 # Commands:
 #   rc new [branch] [repo]   new session: container + clone + herdr tab + Claude
 #                            (omit repo = first repo in repos.conf)
-#   rc issues [--dry-run] [repo]
-#                            start a session for every open GitHub issue
+#   rc issues [list] [repo]  start a session for every open GitHub issue
 #                            labeled "ready-for-agent" (branch issue-<NO>);
 #                            skipped: sub-issues (issues with a parent) and
 #                            issues already being worked on (running session
 #                            or remote branch issue-<NO>*).
-#                            --dry-run: only show what would start
+#                            list: only show what would start
 #   rc ls                    list all sessions
 #   rc attach [session]      open herdr (and focus that workspace if given)
 #   rc claude <session>      start Claude (again) in the container
@@ -247,8 +246,10 @@ cmd_issues() {
     #   - a session with "issue-<NO>" in its name exists (rc container), or
     #   - GitHub already has a branch "issue-<NO>..."
     #     (covers: session finished + removed, PR still open)
-    local dry_run=0
-    if [ "${1:-}" = "--dry-run" ]; then dry_run=1; shift; fi
+    local list_only=0
+    case "${1:-}" in
+        list|--dry-run) list_only=1; shift ;;   # --dry-run: legacy alias for list
+    esac
     local repo="${1:-}"
     repo="$(resolve_repo "$repo")"
     local url; url="$(repo_url "$repo")"
@@ -291,7 +292,7 @@ cmd_issues() {
             echo "Issue #$n: session already running — skipped."
         elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
             echo "Issue #$n: branch issue-$n already exists on GitHub — skipped."
-        elif [ "$dry_run" = 1 ]; then
+        elif [ "$list_only" = 1 ]; then
             echo "Issue #$n: would start a session (branch issue-$n)."
             started=$((started + 1))
         else
@@ -304,8 +305,8 @@ cmd_issues() {
             started=$((started + 1))
         fi
     done <<<"$issues"
-    if [ "$dry_run" = 1 ]; then
-        echo "Dry run: $started session(s) would start, nothing was touched."
+    if [ "$list_only" = 1 ]; then
+        echo "List only: $started session(s) would start, nothing was touched."
     else
         echo "Done: started $started new session(s)."
     fi
