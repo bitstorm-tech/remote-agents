@@ -78,7 +78,8 @@ rc build
 ssh server
 rc new fix-login my-repo     # new session: sandbox + clone + Claude running
 rc issues                    # start a session per open issue labeled
-                             # "ready-for-agent" (branch issue-<NO>);
+                             # "ready-for-agent" (branch issue-<NO>-<slug>,
+                             # slug from the issue title);
                              # sub-issues and work in progress: skipped
 rc issues list               # only show what would start
 rc attach                    # open herdr, tabs = sessions
