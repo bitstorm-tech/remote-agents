@@ -320,7 +320,7 @@ cmd_issues() {
             # </dev/null: commands inside cmd_new (docker, herdr) must not
             # swallow the issue list this loop is reading from stdin
             cmd_new --no-attach \
-                --prompt "Implement the GitHub Issue $n with the council in autonomous mode: run all phases through in this session without stopping between them." \
+                --prompt "Implement GitHub issue $n with the council. Planning (phase 1) is complete and fully recorded in the issue and its sub-issues — do not re-plan. Run phases 2 and 3 autonomously in this session, without stopping between them and without asking Joe anything: every decision is already in the issues. If a genuinely contested point surfaces anyway, record it as a phase-1 gap in a comment on the issue and stop." \
                 "$branch" "$repo" </dev/null
             started=$((started + 1))
         fi
