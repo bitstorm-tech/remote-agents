@@ -8,7 +8,8 @@
 #   rc new [branch] [repo]   new session: container + clone + herdr tab + Claude
 #                            (omit repo = first repo in repos.conf)
 #   rc issues [list] [repo]  start a session for every open GitHub issue
-#                            labeled "ready-for-agent" (branch issue-<NO>);
+#                            labeled "ready-for-agent" (branch
+#                            issue-<NO>-<slug>, slug from the issue title);
 #                            skipped: sub-issues (issues with a parent) and
 #                            issues already being worked on (running session
 #                            or remote branch issue-<NO>*).
@@ -81,6 +82,20 @@ container_name() { echo "rc-$1"; }
 repo_slug() {
     # Extract "owner/repo" from a git URL (ssh or https)
     echo "$1" | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##'
+}
+
+slug_from_title() {
+    # Issue title -> short branch suffix: ASCII, lowercase, dashes.
+    # Umlauts are mapped by hand (iconv //TRANSLIT is unreliable on macOS);
+    # any other non-ASCII becomes a dash and collapses away.
+    local s
+    s="$(sed 's/ä/ae/g; s/ö/oe/g; s/ü/ue/g; s/Ä/Ae/g; s/Ö/Oe/g; s/Ü/Ue/g; s/ß/ss/g' <<<"$1")"
+    s="$(tr '[:upper:]' '[:lower:]' <<<"$s" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+    if [ "${#s}" -gt 30 ]; then
+        s="${s:0:30}"
+        s="${s%-*}"   # truncate at a word boundary
+    fi
+    printf '%s\n' "$s"
 }
 
 resolve_repo() {
@@ -266,11 +281,11 @@ cmd_issues() {
         -f query='query($owner: String!, $name: String!) {
             repository(owner: $owner, name: $name) {
                 issues(states: OPEN, labels: ["ready-for-agent"], first: 100) {
-                    nodes { number parent { number } }
+                    nodes { number title parent { number } }
                 }
             }
         }' \
-        --jq '.data.repository.issues.nodes[] | "\(.number)\t\(.parent.number // "")"')" \
+        --jq '.data.repository.issues.nodes[] | "\(.number)\t\(.parent.number // "-")\t\(.title)"')" \
         || die "could not load issues (GraphQL, repo $slug)"
     if [ -z "$issues" ]; then
         echo "No open issues labeled 'ready-for-agent' in $slug."
@@ -283,25 +298,30 @@ cmd_issues() {
     sessions="$(docker ps -a --filter label=rc.session --format '{{.Label "rc.session"}}')"
     branches="$(gh api "repos/$slug/branches" --paginate --jq '.[].name' 2>/dev/null || true)"
 
-    local n parent started=0
-    while IFS=$'\t' read -r n parent; do
+    # parent "-" = none: bash collapses consecutive tabs (tab counts as IFS
+    # whitespace), so an empty middle field would shift the title into $parent
+    local n parent title branch slug started=0
+    while IFS=$'\t' read -r n parent title; do
         [ -n "$n" ] || continue
-        if [ -n "$parent" ]; then
+        branch="issue-$n"
+        slug="$(slug_from_title "$title")"
+        [ -n "$slug" ] && branch="issue-$n-$slug"
+        if [ "$parent" != "-" ]; then
             echo "Issue #$n: sub-issue of #$parent — skipped."
         elif grep -qE -- "-issue-$n(-|\$)" <<<"$sessions"; then
             echo "Issue #$n: session already running — skipped."
         elif grep -qE -- "^issue-$n(-|\$)" <<<"$branches"; then
-            echo "Issue #$n: branch issue-$n already exists on GitHub — skipped."
+            echo "Issue #$n: a branch issue-$n* already exists on GitHub — skipped."
         elif [ "$list_only" = 1 ]; then
-            echo "Issue #$n: would start a session (branch issue-$n)."
+            echo "Issue #$n: would start a session (branch $branch)."
             started=$((started + 1))
         else
             echo "Issue #$n: starting session ..."
             # </dev/null: commands inside cmd_new (docker, herdr) must not
             # swallow the issue list this loop is reading from stdin
             cmd_new --no-attach \
-                --prompt "Implement the GitHub Issue $n with the council." \
-                "issue-$n" "$repo" </dev/null
+                --prompt "Implement the GitHub Issue $n with the council in autonomous mode: run all phases through in this session without stopping between them." \
+                "$branch" "$repo" </dev/null
             started=$((started + 1))
         fi
     done <<<"$issues"
